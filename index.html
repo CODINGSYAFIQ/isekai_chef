@@ -1,0 +1,2988 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>《异世界厨师》Otherworld Chef - 阶段 5：最终完整版</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      background-color: #0d111a;
+      overflow: hidden;
+      font-family: 'Courier New', 'PingFang SC', 'Microsoft YaHei', monospace;
+    }
+    #game-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      box-shadow: 0 0 28px rgba(0, 0, 0, 0.85);
+    }
+    #orientation-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(13, 17, 26, 0.94);
+      color: #f4e8c1;
+      z-index: 9999;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 24px;
+    }
+    #orientation-overlay h2 {
+      font-size: 20px;
+      margin-bottom: 12px;
+      color: #ffb84d;
+    }
+    #orientation-overlay p {
+      font-size: 14px;
+      line-height: 1.6;
+      color: #cbd5e1;
+      max-width: 320px;
+    }
+    #orientation-overlay button {
+      margin-top: 18px;
+      padding: 8px 18px;
+      background: #ffb84d;
+      color: #1e1b18;
+      border: 2px solid #fff3d1;
+      border-radius: 6px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    @media screen and (max-width: 650px) and (orientation: portrait) {
+      #orientation-overlay {
+        display: flex;
+      }
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+</head>
+<body>
+  <div id="orientation-overlay">
+    <h2>📱 建议横屏游玩《异世界厨师》</h2>
+    <p>本作专为手机横向画面（Landscape）设计。请旋转手机至横屏，或点击下方按钮继续体验。</p>
+    <button onclick="document.getElementById('orientation-overlay').style.display='none'">继续体验</button>
+  </div>
+  <div id="game-container"></div>
+
+  <script>
+    /**
+     * ============================================================================
+     * 《异世界厨师》（Otherworld Chef） - 阶段 5：最终完整版 (Full Release)
+     * 完整包含：
+     *   - 6 大连通房间：A(微光林地)、A1(暖炉餐厅中心枢纽)、A2(呼噜兽牧场)、
+     *     A3(树冠浆果林)、B1(林间瞭望台)、A4(幽光菌菇洞穴)
+     *   - 3 种差异化食材小游戏：A2 节奏套索、A3 花苞限时连跳、A4 泥土脉动拔取夜光菇
+     *   - 3 章主线订单与多段式火候烹饪：《蜜林浆果烤肉》《岩盐黄金菌菇煲》《异界团圆什锦炙烤》
+     *   - 顾客入驻餐厅动态变化 + 暖炉团圆结局演出 + Web Audio 像素音效 + LocalStorage 自动存档
+     * ============================================================================
+     */
+
+    const SAVE_STORAGE_KEY = 'OTHERWORLD_CHEF_SAVE_V5';
+
+    // ----------------------------------------------------------------------------
+    // 0. Web Audio 零依赖复古像素音效合成器 (Retro SFX Synthesizer)
+    // ----------------------------------------------------------------------------
+    class SoundFX {
+      static ctx = null;
+      static muted = false;
+
+      static init() {
+        if (!this.ctx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) this.ctx = new AudioCtx();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      static playTone(freq, type = 'square', duration = 0.1, endFreq = null, gainVal = 0.08) {
+        if (this.muted) return;
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const now = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, now);
+          if (endFreq !== null) {
+            osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + duration);
+          }
+          gain.gain.setValueAtTime(gainVal, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + duration);
+        } catch (e) {}
+      }
+
+      static jump() {
+        this.playTone(220, 'square', 0.12, 480, 0.06);
+      }
+      static bounce() {
+        this.playTone(260, 'triangle', 0.22, 760, 0.1);
+      }
+      static pickup() {
+        this.playTone(523.25, 'sine', 0.09, 659.25, 0.09);
+        setTimeout(() => this.playTone(783.99, 'sine', 0.14, 1046.5, 0.09), 70);
+      }
+      static bellChime() {
+        [523.25, 659.25, 783.99, 1046.5].forEach((f, idx) => {
+          setTimeout(() => this.playTone(f, 'triangle', 0.22, f * 1.02, 0.08), idx * 65);
+        });
+      }
+      static fail() {
+        this.playTone(240, 'sawtooth', 0.18, 110, 0.07);
+      }
+      static fanfare() {
+        const notes = [523.25, 659.25, 783.99, 1046.5];
+        notes.forEach((f, idx) => {
+          setTimeout(() => this.playTone(f, 'square', 0.18, null, 0.08), idx * 95);
+        });
+      }
+      static blip() {
+        this.playTone(440, 'sine', 0.04, 520, 0.04);
+      }
+    }
+
+    // ----------------------------------------------------------------------------
+    // 1. 7状态任务枚举、3章食谱定义与全局状态中心
+    // ----------------------------------------------------------------------------
+    const QUEST_STATES = {
+      NOT_STARTED: 'NOT_STARTED',
+      ACCEPTED: 'ACCEPTED',
+      IN_PROGRESS: 'IN_PROGRESS',
+      INGREDIENTS_READY: 'INGREDIENTS_READY',
+      DISH_COOKED: 'DISH_COOKED',
+      DELIVERED: 'DELIVERED',
+      COMPLETED: 'COMPLETED'
+    };
+
+    const QUEST_STATE_LABELS = {
+      NOT_STARTED: '尚未开始',
+      ACCEPTED: '已接受订单',
+      IN_PROGRESS: '进行中(采集中)',
+      INGREDIENTS_READY: '材料齐备(可烹饪)',
+      DISH_COOKED: '已完成料理(待送餐)',
+      DELIVERED: '已交付料理',
+      COMPLETED: '已完成'
+    };
+
+    // 三幕剧主线食谱与章节配置
+    const CHAPTER_CONFIGS = {
+      1: {
+        chapter: 1,
+        questId: 'ch1_eileen_berry_meat',
+        dishName: '蜜林浆果烤肉',
+        dishIcon: '🍖',
+        customerName: '巡林少女艾琳 (B1 瞭望台)',
+        recipe: { meat: 1, berry: 1, mushroom: 0 },
+        recipeText: '鲜嫩兽肉🥩×1 + 晨露浆果🍒×1',
+        phases: [
+          { minProg: 0,  maxProg: 50,  minHeat: 56, maxHeat: 86, label: '🔥 第1段【武火锁汁(0-50%)】：按住鼓风，保持在右侧高温绿区！', color: '#ffb84d' },
+          { minProg: 50, maxProg: 100, minHeat: 24, maxHeat: 54, label: '🍯 第2段【文火裹酱(50-100%)】：适当松手，降到左侧文火绿区！', color: '#8ae0a8' }
+        ]
+      },
+      2: {
+        chapter: 2,
+        questId: 'ch2_hawk_mushroom_stew',
+        dishName: '岩盐黄金菌菇煲',
+        dishIcon: '🍲',
+        customerName: '异乡行商老霍克 (A4 菌菇洞穴)',
+        recipe: { meat: 1, berry: 0, mushroom: 1 },
+        recipeText: '鲜嫩兽肉🥩×1 + 夜光菌菇🍄×1',
+        phases: [
+          { minProg: 0,  maxProg: 45,  minHeat: 58, maxHeat: 86, label: '🔥 第1段【猛火爆香(0-45%)】：按住鼓风，高温逼出兽肉焦香！', color: '#ffb84d' },
+          { minProg: 45, maxProg: 100, minHeat: 30, maxHeat: 58, label: '🍄 第2段【文火慢炖(45-100%)】：稳住中低温，熬出夜光菌菇高汤！', color: '#8ae0a8' }
+        ]
+      },
+      3: {
+        chapter: 3,
+        questId: 'ch3_finale_feast',
+        dishName: '异界团圆什锦炙烤',
+        dishIcon: '🥘',
+        customerName: '暖炉餐厅团圆长桌 (A1 餐厅)',
+        recipe: { meat: 1, berry: 1, mushroom: 1 },
+        recipeText: '兽肉🥩×1 + 浆果🍒×1 + 夜光菇🍄×1',
+        phases: [
+          { minProg: 0,  maxProg: 35,  minHeat: 62, maxHeat: 88, label: '🔥 第1段【猛火炙烤(0-35%)】：高温锁住呼噜兽肉排的丰沛肉汁！', color: '#ffb84d' },
+          { minProg: 35, maxProg: 70,  minHeat: 38, maxHeat: 66, label: '🍄 第2段【中火融香(35-70%)】：让夜光菌菇的鲜味渗入肌理！', color: '#93c5fd' },
+          { minProg: 70, maxProg: 100, minHeat: 20, maxHeat: 48, label: '🍒 第3段【文火蜜汁(70-100%)】：低温收汁，裹上晶莹浆果蜜釉！', color: '#8ae0a8' }
+        ]
+      }
+    };
+
+    function createInitialState() {
+      return {
+        stage: 5,
+        chapter: 1, // 1: 艾琳篇, 2: 老霍克篇, 3: 终局团圆篇
+        gameCleared: false,
+        currentRoom: 'A',
+        lastFromRoom: 'START',
+        visitedRooms: { A: true, A1: false, A2: false, A3: false, B1: false, A4: false },
+        storyFlags: {
+          metChef: false,
+          metEileen: false,
+          metHawk: false,
+          shortcutBridgeUnlocked: false,
+          caveDoorUnlocked: false,
+          mineLiftUnlocked: false,
+          eileenInRestaurant: false,
+          hawkInRestaurant: false
+        },
+        quest: {
+          id: 'ch1_eileen_berry_meat',
+          title: '蜜林浆果烤肉',
+          state: QUEST_STATES.NOT_STARTED,
+          lastCookedQuality: 'NONE'
+        },
+        inventory: {
+          meat: 0,       // 🥩 鲜嫩兽肉 (A2)
+          berry: 0,      // 🍒 晨露浆果 (A3)
+          mushroom: 0,   // 🍄 夜光菌菇 (A4)
+          cookedDish: 0, // 当前章节成品料理
+          dishChapter: 0,
+          dishQuality: 'NONE',
+          maxCapacity: 8
+        },
+        currentObjective: '向右进入【A1 暖炉餐厅】与老主厨巴隆交谈，开启异世界料理之旅',
+        respawnCount: 0,
+        mushroomBounceCount: 0,
+        roomTransitionCount: 0,
+        lassoSuccessCount: 0,
+        berryPickCount: 0,
+        shroomPickCount: 0,
+        cookSuccessCount: 0,
+        debugVisible: true,
+        virtualInput: {
+          left: false,
+          right: false,
+          jumpPressed: false,
+          jumpJustDown: false,
+          interactJustDown: false
+        },
+        telemetry: {
+          x: 0,
+          y: 0,
+          vx: 0,
+          vy: 0,
+          grounded: false,
+          coyoteTimer: 0,
+          safeX: 110,
+          safeY: 380,
+          nearTarget: '无'
+        }
+      };
+    }
+
+    const GlobalGameState = createInitialState();
+
+    // ----------------------------------------------------------------------------
+    // 1.2 LocalStorage 存档与读档管理器 (SaveSystem)
+    // ----------------------------------------------------------------------------
+    const SaveSystem = {
+      save() {
+        try {
+          const payload = {
+            chapter: GlobalGameState.chapter,
+            gameCleared: GlobalGameState.gameCleared,
+            currentRoom: GlobalGameState.currentRoom,
+            visitedRooms: GlobalGameState.visitedRooms,
+            storyFlags: GlobalGameState.storyFlags,
+            quest: GlobalGameState.quest,
+            inventory: GlobalGameState.inventory,
+            lassoSuccessCount: GlobalGameState.lassoSuccessCount,
+            berryPickCount: GlobalGameState.berryPickCount,
+            shroomPickCount: GlobalGameState.shroomPickCount,
+            cookSuccessCount: GlobalGameState.cookSuccessCount
+          };
+          localStorage.setItem(SAVE_STORAGE_KEY, JSON.stringify(payload));
+        } catch (e) {}
+      },
+      load() {
+        try {
+          const raw = localStorage.getItem(SAVE_STORAGE_KEY);
+          if (!raw) return false;
+          const data = JSON.parse(raw);
+          if (!data || typeof data.chapter !== 'number') return false;
+          GlobalGameState.chapter = data.chapter;
+          GlobalGameState.gameCleared = !!data.gameCleared;
+          GlobalGameState.currentRoom = data.currentRoom || 'A1';
+          GlobalGameState.lastFromRoom = 'DEFAULT';
+          Object.assign(GlobalGameState.visitedRooms, data.visitedRooms || {});
+          Object.assign(GlobalGameState.storyFlags, data.storyFlags || {});
+          Object.assign(GlobalGameState.quest, data.quest || {});
+          Object.assign(GlobalGameState.inventory, data.inventory || {});
+          GlobalGameState.lassoSuccessCount = data.lassoSuccessCount || 0;
+          GlobalGameState.berryPickCount = data.berryPickCount || 0;
+          GlobalGameState.shroomPickCount = data.shroomPickCount || 0;
+          GlobalGameState.cookSuccessCount = data.cookSuccessCount || 0;
+          return true;
+        } catch (e) {
+          return false;
+        }
+      },
+      resetAll() {
+        try {
+          localStorage.removeItem(SAVE_STORAGE_KEY);
+        } catch (e) {}
+        const fresh = createInitialState();
+        Object.assign(GlobalGameState, fresh);
+      }
+    };
+
+    // 启动时尝试读取本地存档
+    const hasLoadedSave = SaveSystem.load();
+
+    // ----------------------------------------------------------------------------
+    // 1.3 背包与三幕式任务状态机管理器
+    // ----------------------------------------------------------------------------
+    const InventoryManager = {
+      getTotalCount() {
+        const inv = GlobalGameState.inventory;
+        return inv.meat + inv.berry + inv.mushroom + inv.cookedDish;
+      },
+      canAdd(count = 1) {
+        return this.getTotalCount() + count <= GlobalGameState.inventory.maxCapacity;
+      },
+      addItem(key, count = 1) {
+        if (!this.canAdd(count)) return false;
+        GlobalGameState.inventory[key] = (GlobalGameState.inventory[key] || 0) + count;
+        QuestManager.syncWithInventory();
+        SaveSystem.save();
+        return true;
+      },
+      hasIngredientsForCurrentChapter() {
+        const cfg = CHAPTER_CONFIGS[GlobalGameState.chapter];
+        const inv = GlobalGameState.inventory;
+        return (
+          inv.meat >= cfg.recipe.meat &&
+          inv.berry >= cfg.recipe.berry &&
+          inv.mushroom >= cfg.recipe.mushroom
+        );
+      },
+      completeCookingDish(quality = 'NORMAL') {
+        const cfg = CHAPTER_CONFIGS[GlobalGameState.chapter];
+        if (!this.hasIngredientsForCurrentChapter()) return false;
+        const inv = GlobalGameState.inventory;
+        inv.meat -= cfg.recipe.meat;
+        inv.berry -= cfg.recipe.berry;
+        inv.mushroom -= cfg.recipe.mushroom;
+        inv.cookedDish = 1;
+        inv.dishChapter = GlobalGameState.chapter;
+        inv.dishQuality = quality;
+        GlobalGameState.quest.lastCookedQuality = quality;
+        GlobalGameState.cookSuccessCount += 1;
+        QuestManager.setState(QUEST_STATES.DISH_COOKED);
+        SaveSystem.save();
+        return true;
+      },
+      deliverCookedDish() {
+        if (GlobalGameState.inventory.cookedDish < 1) return false;
+        const deliveredQuality = GlobalGameState.inventory.dishQuality;
+        GlobalGameState.inventory.cookedDish = 0;
+        QuestManager.setState(QUEST_STATES.DELIVERED);
+        SaveSystem.save();
+        return deliveredQuality;
+      }
+    };
+
+    const QuestManager = {
+      getCurrentConfig() {
+        return CHAPTER_CONFIGS[GlobalGameState.chapter];
+      },
+      acceptOrder() {
+        const cur = GlobalGameState.quest.state;
+        if (cur === QUEST_STATES.NOT_STARTED) {
+          this.setState(QUEST_STATES.ACCEPTED);
+          this.syncWithInventory();
+          SaveSystem.save();
+        }
+      },
+      setState(newState) {
+        GlobalGameState.quest.state = newState;
+        SaveSystem.save();
+      },
+      advanceToChapter(nextChapter) {
+        if (!CHAPTER_CONFIGS[nextChapter]) return;
+        GlobalGameState.chapter = nextChapter;
+        const cfg = CHAPTER_CONFIGS[nextChapter];
+        GlobalGameState.quest.id = cfg.questId;
+        GlobalGameState.quest.title = cfg.dishName;
+        GlobalGameState.quest.state = QUEST_STATES.ACCEPTED;
+        this.syncWithInventory();
+        SaveSystem.save();
+      },
+      syncWithInventory() {
+        const q = GlobalGameState.quest;
+        const inv = GlobalGameState.inventory;
+        if (q.state === QUEST_STATES.DELIVERED || q.state === QUEST_STATES.COMPLETED) return;
+        if (inv.cookedDish >= 1 && inv.dishChapter === GlobalGameState.chapter) {
+          q.state = QUEST_STATES.DISH_COOKED;
+          return;
+        }
+        if (InventoryManager.hasIngredientsForCurrentChapter()) {
+          q.state = QUEST_STATES.INGREDIENTS_READY;
+        } else if (inv.meat > 0 || inv.berry > 0 || inv.mushroom > 0) {
+          q.state = QUEST_STATES.IN_PROGRESS;
+        } else if (q.state === QUEST_STATES.INGREDIENTS_READY) {
+          q.state = QUEST_STATES.IN_PROGRESS;
+        }
+      }
+    };
+
+    const ROOM_METADATA = {
+      A:  { name: 'A：微光林地',       width: 1500, height: 540, theme: 'forest' },
+      A1: { name: 'A1：暖炉餐厅与厨房', width: 1080, height: 500, theme: 'kitchen' },
+      A2: { name: 'A2：后山呼噜兽牧场', width: 1450, height: 540, theme: 'pasture' },
+      A3: { name: 'A3：树冠浆果林',     width: 1280, height: 680, theme: 'canopy' },
+      B1: { name: 'B1：林间瞭望台',     width: 1150, height: 540, theme: 'watchtower' },
+      A4: { name: 'A4：幽光菌菇洞穴',   width: 1350, height: 560, theme: 'cave' }
+    };
+
+    // ----------------------------------------------------------------------------
+    // 2. 程序化像素美术生成引擎 (Procedural Pixel Art Factory)
+    // ----------------------------------------------------------------------------
+    class PixelArtFactory {
+      static generateAllTextures(scene) {
+        if (scene.textures.exists('player_idle')) return;
+
+        this.createPlayerTexture(scene, 'player_idle', false);
+        this.createPlayerTexture(scene, 'player_walk', true);
+        this.createChefTexture(scene, 'npc_chef');
+        this.createEileenTexture(scene, 'npc_eileen');
+        this.createHawkTexture(scene, 'npc_hawk');
+        this.createPuffBeastTexture(scene, 'creature_beast');
+
+        this.createGrassTileTexture(scene, 'tile_ground');
+        this.createCaveTileTexture(scene, 'tile_cave');
+        this.createWoodFloorTexture(scene, 'tile_wood_floor');
+        this.createPlatformTileTexture(scene, 'tile_platform');
+        this.createBridgeTileTexture(scene, 'tile_bridge');
+
+        this.createMushroomTexture(scene, 'bouncy_mushroom');
+        this.createSignpostTexture(scene, 'signpost');
+        this.createRestaurantDoorTexture(scene, 'door_wood');
+        this.createKitchenStoveTexture(scene, 'kitchen_stove');
+        this.createDiningTableTexture(scene, 'dining_table');
+
+        this.createBerryBushTexture(scene, 'berry_bush_closed', false);
+        this.createBerryBushTexture(scene, 'berry_bush_bloom', true);
+        this.createFlowerBudTexture(scene, 'flower_bud');
+        this.createLassoReticleTexture(scene, 'lasso_reticle');
+
+        // 阶段 5 新增：A4 夜光菌菇纹理（常规态 vs 黄金脉动可拔取态）
+        this.createNightShroomTexture(scene, 'night_shroom_normal', false);
+        this.createNightShroomTexture(scene, 'night_shroom_pulse', true);
+
+        const pGfx = scene.make.graphics({ x: 0, y: 0, add: false });
+        pGfx.fillStyle(0xffe999, 1);
+        pGfx.fillRect(2, 2, 4, 4);
+        pGfx.fillStyle(0xffb84d, 0.45);
+        pGfx.fillRect(0, 0, 8, 8);
+        pGfx.generateTexture('particle_glow', 8, 8);
+        pGfx.destroy();
+      }
+
+      static createPlayerTexture(scene, key, isWalkFrame) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x1f2438, 1);
+        g.fillRect(8, 2, 16, 10);
+        g.fillStyle(0xfbe0c4, 1);
+        g.fillRect(10, 8, 13, 9);
+        g.fillStyle(0x1a1c2c, 1);
+        g.fillRect(19, 11, 2, 3);
+        g.fillStyle(0xe86a33, 1);
+        g.fillRect(8, 17, 16, 4);
+        g.fillRect(6, 19, 4, 5);
+        g.fillStyle(0x3b5dc9, 1);
+        g.fillRect(9, 21, 14, 11);
+        g.fillStyle(0xf4f4f4, 1);
+        g.fillRect(11, 22, 10, 10);
+        g.fillStyle(0xfbe0c4, 1);
+        g.fillRect(isWalkFrame ? 14 : 12, 22, 4, 6);
+        g.fillStyle(0x4b3327, 1);
+        if (isWalkFrame) {
+          g.fillRect(9, 32, 5, 7);
+          g.fillRect(18, 30, 5, 7);
+        } else {
+          g.fillRect(10, 32, 5, 8);
+          g.fillRect(17, 32, 5, 8);
+        }
+        g.generateTexture(key, 32, 40);
+        g.destroy();
+      }
+
+      static createChefTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0xffffff, 1);
+        g.fillRect(9, 0, 18, 10);
+        g.fillStyle(0xdbe4ee, 1);
+        g.fillRect(11, 8, 14, 3);
+        g.fillStyle(0xd99b66, 1);
+        g.fillRect(8, 11, 20, 10);
+        g.fillStyle(0x7a3e26, 1);
+        g.fillRect(8, 17, 20, 6);
+        g.fillStyle(0x1a1c2c, 1);
+        g.fillRect(12, 13, 3, 3);
+        g.fillStyle(0x8c3b2b, 1);
+        g.fillRect(5, 23, 26, 16);
+        g.fillStyle(0xfff3d1, 1);
+        g.fillRect(8, 24, 20, 15);
+        g.fillStyle(0x3b2316, 1);
+        g.fillRect(9, 39, 7, 7);
+        g.fillRect(20, 39, 7, 7);
+        g.generateTexture(key, 36, 46);
+        g.destroy();
+      }
+
+      static createEileenTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x2d6a4f, 1);
+        g.fillRect(6, 2, 20, 11);
+        g.fillStyle(0xf4d35e, 1);
+        g.fillRect(8, 7, 16, 6);
+        g.fillStyle(0xfbe0c4, 1);
+        g.fillRect(9, 10, 14, 8);
+        g.fillStyle(0x1a1c2c, 1);
+        g.fillRect(19, 12, 2, 3);
+        g.fillStyle(0x40916c, 1);
+        g.fillRect(6, 18, 20, 15);
+        g.fillStyle(0x7f5539, 1);
+        g.fillRect(10, 20, 12, 12);
+        g.fillStyle(0x4b3327, 1);
+        g.fillRect(10, 33, 5, 9);
+        g.fillRect(17, 33, 5, 9);
+        g.generateTexture(key, 32, 42);
+        g.destroy();
+      }
+
+      // 阶段 5 新增：顾客 2 异乡行商老霍克像素形象（戴宽檐旅帽、背行囊）
+      static createHawkTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        // 宽檐旅行帽
+        g.fillStyle(0xb45309, 1);
+        g.fillRect(3, 4, 28, 5);
+        g.fillRect(8, 0, 18, 5);
+        // 脸庞与花白胡须
+        g.fillStyle(0xe6ccb2, 1);
+        g.fillRect(9, 9, 16, 9);
+        g.fillStyle(0xe2e8f0, 1);
+        g.fillRect(10, 15, 14, 5);
+        g.fillStyle(0x1e293b, 1);
+        g.fillRect(19, 11, 2, 3);
+        // 旅人斗篷与行囊
+        g.fillStyle(0x3b5dc9, 1);
+        g.fillRect(6, 20, 22, 15);
+        g.fillStyle(0xd97706, 1);
+        g.fillRect(2, 18, 6, 14);
+        // 旅行靴
+        g.fillStyle(0x3b2316, 1);
+        g.fillRect(10, 35, 6, 8);
+        g.fillRect(18, 35, 6, 8);
+        g.generateTexture(key, 36, 44);
+        g.destroy();
+      }
+
+      static createPuffBeastTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0xf5ebe0, 1);
+        g.fillRect(6, 6, 30, 18);
+        g.fillRect(10, 3, 22, 4);
+        g.fillStyle(0xffb84d, 1);
+        g.fillRect(32, 2, 5, 6);
+        g.fillStyle(0xd5bdaf, 1);
+        g.fillRect(28, 9, 12, 12);
+        g.fillStyle(0x1f2438, 1);
+        g.fillRect(35, 12, 3, 3);
+        g.fillStyle(0x8a6552, 1);
+        g.fillRect(10, 24, 5, 7);
+        g.fillRect(18, 24, 5, 7);
+        g.fillRect(27, 24, 5, 7);
+        g.generateTexture(key, 44, 32);
+        g.destroy();
+      }
+
+      static createGrassTileTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x2c354d, 1);
+        g.fillRect(0, 0, 32, 32);
+        g.fillStyle(0x22293d, 1);
+        g.fillRect(4, 12, 10, 8);
+        g.fillRect(18, 20, 10, 8);
+        g.fillStyle(0x41a67e, 1);
+        g.fillRect(0, 0, 32, 7);
+        g.fillStyle(0x73d69b, 1);
+        g.fillRect(0, 0, 32, 3);
+        g.generateTexture(key, 32, 32);
+        g.destroy();
+      }
+
+      static createCaveTileTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x1e1b2e, 1);
+        g.fillRect(0, 0, 32, 32);
+        g.fillStyle(0x2d2640, 1);
+        g.fillRect(4, 10, 12, 10);
+        g.fillRect(18, 18, 10, 10);
+        g.fillStyle(0x38bdf8, 0.85);
+        g.fillRect(0, 0, 32, 5);
+        g.fillStyle(0xbae6fd, 0.9);
+        g.fillRect(2, 0, 28, 2);
+        g.generateTexture(key, 32, 32);
+        g.destroy();
+      }
+
+      static createWoodFloorTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x4a2f1d, 1);
+        g.fillRect(0, 0, 32, 32);
+        g.fillStyle(0x6e472b, 1);
+        g.fillRect(0, 0, 32, 8);
+        g.fillStyle(0x8c5a36, 1);
+        g.fillRect(2, 1, 28, 3);
+        g.fillStyle(0x362012, 1);
+        g.fillRect(4, 14, 24, 4);
+        g.fillRect(8, 24, 18, 4);
+        g.generateTexture(key, 32, 32);
+        g.destroy();
+      }
+
+      static createPlatformTileTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x5c3c28, 1);
+        g.fillRect(0, 4, 32, 14);
+        g.fillStyle(0x3d2618, 1);
+        g.fillRect(0, 14, 32, 4);
+        g.fillStyle(0x56b886, 1);
+        g.fillRect(0, 0, 32, 5);
+        g.fillStyle(0x8ae0a8, 1);
+        g.fillRect(2, 0, 28, 2);
+        g.generateTexture(key, 32, 20);
+        g.destroy();
+      }
+
+      static createBridgeTileTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x9c6644, 1);
+        g.fillRect(0, 2, 32, 12);
+        g.fillStyle(0xffb84d, 1);
+        g.fillRect(2, 0, 28, 3);
+        g.fillStyle(0x582f0e, 1);
+        g.fillRect(6, 4, 3, 10);
+        g.fillRect(22, 4, 3, 10);
+        g.generateTexture(key, 32, 16);
+        g.destroy();
+      }
+
+      static createMushroomTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0xead4aa, 1);
+        g.fillRect(14, 14, 12, 18);
+        g.fillStyle(0xff8c42, 1);
+        g.fillRect(4, 4, 32, 12);
+        g.fillRect(8, 0, 24, 5);
+        g.fillStyle(0xfff1a8, 1);
+        g.fillRect(10, 4, 5, 4);
+        g.fillRect(22, 2, 4, 4);
+        g.generateTexture(key, 40, 32);
+        g.destroy();
+      }
+
+      static createNightShroomTexture(scene, key, isPulsing) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        // 菌柄
+        g.fillStyle(isPulsing ? 0xfff3b0 : 0xcbd5e1, 1);
+        g.fillRect(15, 16, 8, 16);
+        // 菌伞
+        g.fillStyle(isPulsing ? 0xffb84d : 0x38bdf8, 1);
+        g.fillRect(5, 6, 28, 11);
+        g.fillRect(9, 2, 20, 5);
+        // 发光斑点
+        g.fillStyle(0xffffff, 1);
+        g.fillRect(10, 6, 4, 4);
+        g.fillRect(22, 5, 4, 4);
+        if (isPulsing) {
+          g.lineStyle(2, 0xffe89e, 0.95);
+          g.strokeCircle(19, 14, 17);
+        }
+        g.generateTexture(key, 38, 34);
+        g.destroy();
+      }
+
+      static createSignpostTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x523624, 1);
+        g.fillRect(13, 14, 6, 26);
+        g.fillStyle(0x8f5f3b, 1);
+        g.fillRect(2, 4, 28, 16);
+        g.fillStyle(0xba8558, 1);
+        g.fillRect(4, 6, 24, 12);
+        g.fillStyle(0x3d2516, 1);
+        g.fillRect(7, 9, 18, 2);
+        g.fillRect(7, 13, 12, 2);
+        g.generateTexture(key, 32, 40);
+        g.destroy();
+      }
+
+      static createRestaurantDoorTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x4a342b, 1);
+        g.fillRect(4, 16, 56, 72);
+        g.fillStyle(0xb84a39, 1);
+        g.fillRect(0, 6, 64, 12);
+        g.fillStyle(0xffb84d, 1);
+        g.fillRect(14, 28, 36, 60);
+        g.fillStyle(0xffe89e, 1);
+        g.fillRect(18, 32, 28, 52);
+        g.fillStyle(0x6e4228, 1);
+        g.fillRect(31, 28, 2, 60);
+        g.fillRect(14, 54, 36, 3);
+        g.generateTexture(key, 64, 88);
+        g.destroy();
+      }
+
+      static createKitchenStoveTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x475569, 1);
+        g.fillRect(4, 20, 72, 44);
+        g.fillStyle(0x334155, 1);
+        g.fillRect(8, 24, 64, 36);
+        g.fillStyle(0xff6b35, 1);
+        g.fillRect(22, 36, 36, 22);
+        g.fillStyle(0xffe66d, 1);
+        g.fillRect(28, 42, 24, 16);
+        g.fillStyle(0x1e293b, 1);
+        g.fillRect(18, 6, 44, 16);
+        g.fillStyle(0xfbbf24, 1);
+        g.fillRect(22, 4, 36, 4);
+        g.generateTexture(key, 80, 64);
+        g.destroy();
+      }
+
+      static createDiningTableTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x7f5539, 1);
+        g.fillRect(4, 14, 64, 8);
+        g.fillRect(12, 22, 6, 18);
+        g.fillRect(54, 22, 6, 18);
+        g.fillStyle(0xffe89e, 1);
+        g.fillRect(14, 14, 44, 4);
+        g.fillStyle(0xffffff, 1);
+        g.fillRect(26, 8, 20, 6);
+        g.fillStyle(0xd94e34, 1);
+        g.fillRect(30, 4, 12, 5);
+        g.generateTexture(key, 72, 40);
+        g.destroy();
+      }
+
+      static createBerryBushTexture(scene, key, isBlooming) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x2d6a4f, 1);
+        g.fillCircle(20, 20, 16);
+        g.fillStyle(isBlooming ? 0x52b788 : 0x3b6e57, 1);
+        g.fillCircle(16, 16, 12);
+        if (isBlooming) {
+          g.fillStyle(0xff2a55, 1);
+          g.fillRect(8, 10, 7, 7);
+          g.fillRect(22, 8, 7, 7);
+          g.fillRect(15, 21, 7, 7);
+          g.fillStyle(0xffffff, 1);
+          g.fillRect(10, 11, 2, 2);
+          g.fillRect(24, 9, 2, 2);
+          g.fillRect(17, 22, 2, 2);
+        } else {
+          g.fillStyle(0x74c69d, 0.7);
+          g.fillRect(10, 12, 5, 5);
+          g.fillRect(22, 10, 5, 5);
+          g.fillRect(16, 22, 5, 5);
+        }
+        g.generateTexture(key, 40, 36);
+        g.destroy();
+      }
+
+      static createFlowerBudTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0x52b788, 1);
+        g.fillRect(16, 18, 4, 18);
+        g.fillStyle(0xffb84d, 1);
+        g.fillCircle(18, 14, 11);
+        g.fillStyle(0xfff3b0, 1);
+        g.fillCircle(18, 12, 7);
+        g.generateTexture(key, 36, 36);
+        g.destroy();
+      }
+
+      static createLassoReticleTexture(scene, key) {
+        const g = scene.make.graphics({ x: 0, y: 0, add: false });
+        g.lineStyle(3, 0xffb84d, 1);
+        g.strokeCircle(28, 28, 24);
+        g.lineStyle(2, 0xfff3b0, 0.85);
+        g.strokeCircle(28, 28, 16);
+        g.fillStyle(0xff6b35, 1);
+        g.fillRect(26, 2, 4, 8);
+        g.fillRect(26, 46, 4, 8);
+        g.fillRect(2, 26, 8, 4);
+        g.fillRect(46, 26, 8, 4);
+        g.generateTexture(key, 56, 56);
+        g.destroy();
+      }
+    }
+
+    // ----------------------------------------------------------------------------
+    // 3. 六房间无缝世界与三大食材玩法场景 (WorldScene)
+    // ----------------------------------------------------------------------------
+    class WorldScene extends Phaser.Scene {
+      constructor() {
+        super({ key: 'WorldScene' });
+      }
+
+      init(data) {
+        this.currentRoomKey = (data && data.room) ? data.room : GlobalGameState.currentRoom;
+        this.entryFrom = (data && data.from) ? data.from : GlobalGameState.lastFromRoom || 'START';
+        GlobalGameState.currentRoom = this.currentRoomKey;
+        GlobalGameState.lastFromRoom = this.entryFrom;
+        GlobalGameState.visitedRooms[this.currentRoomKey] = true;
+        SaveSystem.save();
+      }
+
+      preload() {
+        PixelArtFactory.generateAllTextures(this);
+      }
+
+      create() {
+        const meta = ROOM_METADATA[this.currentRoomKey];
+        this.roomWidth = meta.width;
+        this.roomHeight = meta.height;
+        this.physics.world.setBounds(0, 0, this.roomWidth, this.roomHeight + 120);
+
+        this.createRoomBackground(meta.theme);
+
+        this.groundGroup = this.physics.add.staticGroup();
+        this.mushroomGroup = this.physics.add.staticGroup();
+        this.interactables = [];
+        this.spawnMap = {};
+        this.patrolNpcs = [];
+
+        this.lassoActive = false;
+        this.berryChallengeTimer = 0;
+        this.berryBushes = [];
+        this.caveShrooms = [];
+
+        switch (this.currentRoomKey) {
+          case 'A':  this.buildRoomA(); break;
+          case 'A1': this.buildRoomA1(); break;
+          case 'A2': this.buildRoomA2(); break;
+          case 'A3': this.buildRoomA3(); break;
+          case 'B1': this.buildRoomB1(); break;
+          case 'A4': this.buildRoomA4(); break;
+        }
+
+        const spawn = this.spawnMap[this.entryFrom] || this.spawnMap['DEFAULT'] || { x: 110, y: 380 };
+        this.spawnPoint = { x: spawn.x, y: spawn.y };
+        this.lastSafePos = { x: spawn.x, y: spawn.y };
+        this.isRespawning = false;
+        this.isTransitioning = false;
+        this.doorCooldown = 350;
+
+        this.player = this.physics.add.sprite(spawn.x, spawn.y, 'player_idle');
+        this.player.setSize(18, 34);
+        this.player.setOffset(7, 6);
+        this.player.setDepth(15);
+
+        this.moveSpeed = 225;
+        this.jumpVelocity = -445;
+        this.coyoteTimeMax = 120;
+        this.coyoteTimer = 0;
+        this.jumpBufferMax = 120;
+        this.jumpBufferTimer = 0;
+        this.walkAnimTimer = 0;
+
+        this.physics.add.collider(this.player, this.groundGroup);
+        this.physics.add.collider(this.player, this.mushroomGroup, this.handleMushroomBounce, null, this);
+
+        this.cameras.main.setBounds(0, 0, this.roomWidth, this.roomHeight);
+        this.cameras.main.startFollow(this.player, true, 0.14, 0.14);
+        this.cameras.main.fadeIn(240, 13, 17, 26);
+
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.keys = this.input.keyboard.addKeys({
+          left: Phaser.Input.Keyboard.KeyCodes.A,
+          right: Phaser.Input.Keyboard.KeyCodes.D,
+          up: Phaser.Input.Keyboard.KeyCodes.W,
+          space: Phaser.Input.Keyboard.KeyCodes.SPACE,
+          interactE: Phaser.Input.Keyboard.KeyCodes.E,
+          interactF: Phaser.Input.Keyboard.KeyCodes.F,
+          resetR: Phaser.Input.Keyboard.KeyCodes.R,
+          debugG: Phaser.Input.Keyboard.KeyCodes.G
+        });
+
+        this.promptText = this.add.text(0, 0, '', {
+          fontSize: '13px',
+          fontFamily: 'monospace',
+          color: '#1e1b18',
+          backgroundColor: '#ffe89e',
+          padding: { x: 6, y: 3 }
+        }).setOrigin(0.5, 1).setDepth(45).setVisible(false);
+
+        if (!this.scene.isActive('UIScene')) {
+          this.scene.launch('UIScene');
+        }
+
+        QuestManager.syncWithInventory();
+        this.refreshObjectiveText();
+
+        if (this.currentRoomKey === 'A' && this.entryFrom === 'START' && GlobalGameState.roomTransitionCount === 0 && !hasLoadedSave) {
+          this.time.delayedCall(300, () => {
+            this.events.emit('show-dialogue', {
+              speaker: '序幕：雨夜之后，异界微光（阶段 5 最终完整版）',
+              lines: [
+                '冰冷的雨夜、歹徒刺眼的刀光……当你再次睁开双眼时，自己正站在异世界的【A：微光林地】中，双手还残留着一丝微颤。',
+                '远处飘来温暖的果木炊烟——那是老主厨巴隆经营的【A1：暖炉餐厅】。穿过前方林地去餐厅看看吧，一段用料理治愈人心与寻找归属感的旅程即将开始！'
+              ]
+            });
+          });
+        }
+      }
+
+      spawnFloatingToast(x, y, message, colorHex = '#ffe89e') {
+        const toast = this.add.text(x, y - 24, message, {
+          fontSize: '14px',
+          fontFamily: 'monospace',
+          fontStyle: 'bold',
+          color: colorHex,
+          backgroundColor: '#0f172a',
+          padding: { x: 6, y: 3 }
+        }).setOrigin(0.5).setDepth(60);
+
+        this.tweens.add({
+          targets: toast,
+          y: y - 72,
+          alpha: 0,
+          duration: 1250,
+          ease: 'Cubic.easeOut',
+          onComplete: () => toast.destroy()
+        });
+      }
+
+      addGround(startX, endX, topY, tileKey = 'tile_ground') {
+        for (let x = startX; x < endX; x += 32) {
+          for (let y = topY; y < this.roomHeight; y += 32) {
+            const t = this.groundGroup.create(x + 16, y + 16, tileKey);
+            if (y > topY) t.setTint(0x6e788f);
+            t.refreshBody();
+          }
+        }
+      }
+
+      addPlatform(startX, widthTiles, y, tileKey = 'tile_platform') {
+        for (let i = 0; i < widthTiles; i++) {
+          const p = this.groundGroup.create(startX + i * 32 + 16, y + 10, tileKey);
+          p.refreshBody();
+        }
+      }
+
+      addWall(x, topY, bottomY) {
+        for (let y = topY; y < bottomY; y += 32) {
+          const w = this.groundGroup.create(x, y + 16, 'tile_ground');
+          w.setTint(0x334155);
+          w.refreshBody();
+        }
+      }
+
+      addDoor(x, y, label, targetRoom, fromKey) {
+        const door = this.add.image(x, y - 28, 'door_wood').setDepth(5);
+        this.add.text(x, y - 82, `🚪 ${targetRoom}`, {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#ffe89e',
+          backgroundColor: '#1e293b',
+          padding: { x: 4, y: 2 }
+        }).setOrigin(0.5);
+
+        this.interactables.push({
+          id: `door_${targetRoom}_${fromKey}`,
+          x: x,
+          y: y,
+          label: label,
+          onInteract: () => this.transitionToRoom(targetRoom, fromKey)
+        });
+        return door;
+      }
+
+      transitionToRoom(targetRoom, fromKey) {
+        if (this.isTransitioning || this.doorCooldown > 0) return;
+        this.isTransitioning = true;
+        SoundFX.blip();
+        GlobalGameState.roomTransitionCount++;
+        this.cameras.main.fadeOut(210, 13, 17, 26);
+        this.time.delayedCall(220, () => {
+          this.scene.restart({ room: targetRoom, from: fromKey });
+        });
+      }
+
+      createRoomBackground(theme) {
+        const bg = this.add.graphics();
+        if (theme === 'kitchen') {
+          bg.fillGradientStyle(0x2b1d16, 0x2b1d16, 0x432818, 0x58311c, 1);
+          bg.fillRect(0, 0, this.roomWidth, this.roomHeight);
+          bg.fillStyle(0x211510, 0.65);
+          for (let x = 120; x < this.roomWidth; x += 220) {
+            bg.fillRect(x, 40, 24, this.roomHeight - 80);
+          }
+        } else if (theme === 'pasture') {
+          bg.fillGradientStyle(0x1b263b, 0x1b263b, 0x335c67, 0x2d6a4f, 1);
+          bg.fillRect(0, 0, this.roomWidth, this.roomHeight);
+        } else if (theme === 'canopy') {
+          bg.fillGradientStyle(0x081c15, 0x081c15, 0x1b4332, 0x2d6a4f, 1);
+          bg.fillRect(0, 0, this.roomWidth, this.roomHeight);
+        } else if (theme === 'watchtower') {
+          bg.fillGradientStyle(0x0f172a, 0x1e1b4b, 0x1e293b, 0x334155, 1);
+          bg.fillRect(0, 0, this.roomWidth, this.roomHeight);
+        } else if (theme === 'cave') {
+          bg.fillGradientStyle(0x090a14, 0x090a14, 0x1b1630, 0x1e293b, 1);
+          bg.fillRect(0, 0, this.roomWidth, this.roomHeight);
+        } else {
+          bg.fillGradientStyle(0x0f172a, 0x0f172a, 0x1e293b, 0x26354d, 1);
+          bg.fillRect(0, 0, this.roomWidth, this.roomHeight);
+        }
+        bg.setScrollFactor(0);
+
+        for (let i = 0; i < 18; i++) {
+          const px = Phaser.Math.Between(40, this.roomWidth - 40);
+          const py = Phaser.Math.Between(60, this.roomHeight - 80);
+          const p = this.add.image(px, py, 'particle_glow').setAlpha(0.45);
+          this.tweens.add({
+            targets: p,
+            y: py - 18,
+            alpha: 0.15,
+            duration: Phaser.Math.Between(1500, 2600),
+            yoyo: true,
+            repeat: -1
+          });
+        }
+      }
+
+      // ========================================================================
+      // 房间 A：微光林地
+      // ========================================================================
+      buildRoomA() {
+        this.spawnMap = {
+          START:   { x: 110,  y: 380 },
+          DEFAULT: { x: 110,  y: 380 },
+          from_A1: { x: 1320, y: 360 }
+        };
+
+        this.addWall(16, 80, 444);
+        this.addGround(0, 480, 444);
+        this.addPlatform(520, 3, 368);
+        this.addPlatform(664, 3, 304);
+        this.addGround(800, 1088, 444);
+
+        const m = this.mushroomGroup.create(1000, 428, 'bouncy_mushroom');
+        m.refreshBody();
+
+        this.addPlatform(1060, 4, 260);
+        this.addGround(1216, 1500, 412);
+        this.addWall(1484, 80, 412);
+
+        this.add.image(240, 424, 'signpost');
+        this.interactables.push({
+          id: 'sign_a',
+          x: 240,
+          y: 424,
+          label: '阅读林间路标',
+          onInteract: () => {
+            this.events.emit('show-dialogue', {
+              speaker: '微光林地路标',
+              lines: [
+                '【A：微光林地】向东直通：老主厨巴隆的“暖炉亭餐厅（A1）”。',
+                '全地图提示：A1 厨房连接着 B1 瞭望台（二楼）、A2 呼噜兽牧场（右门）、A3 树冠浆果林与 A4 幽光菌菇洞穴（地下窖门）。'
+              ]
+            });
+          }
+        });
+
+        this.addDoor(1390, 396, '进入【A1：暖炉餐厅】', 'A1', 'from_A');
+      }
+
+      // ========================================================================
+      // 房间 A1：暖炉餐厅与厨房（绝对中心枢纽 + 三幕剧灶台 + 团圆长桌结局）
+      // ========================================================================
+      buildRoomA1() {
+        this.spawnMap = {
+          DEFAULT: { x: 130, y: 380 },
+          from_A:  { x: 130, y: 380 },
+          from_A2: { x: 940, y: 380 },
+          from_B1: { x: 520, y: 200 },
+          from_A4: { x: 800, y: 380 }
+        };
+
+        this.addWall(16, 40, 428);
+        this.addWall(1064, 40, 428);
+        this.addGround(0, 1080, 428, 'tile_wood_floor');
+
+        this.addPlatform(260, 3, 340);
+        this.addPlatform(380, 8, 250);
+        this.addPlatform(680, 3, 340);
+
+        this.addDoor(75, 412, '返回【A：微光林地】', 'A', 'from_A1');
+        this.addDoor(995, 412, '前往【A2：后山牧场】', 'A2', 'from_A1');
+        this.addDoor(512, 234, '上楼去【B1：林间瞭望台】', 'B1', 'from_A1');
+
+        // 阶段 5 新增：通往地下 A4 幽光菌菇洞穴的窖门（第2章解锁，也可直接互动了解）
+        const caveDoorX = 815;
+        const caveDoorY = 412;
+        const caveDoorImg = this.add.image(caveDoorX, caveDoorY - 28, 'door_wood').setDepth(5);
+        caveDoorImg.setTint(GlobalGameState.storyFlags.caveDoorUnlocked ? 0x38bdf8 : 0x64748b);
+        this.add.text(caveDoorX, caveDoorY - 82, GlobalGameState.storyFlags.caveDoorUnlocked ? '🚪 A4 菌菇洞穴' : '🔒 A4 地下窖门', {
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          color: '#bae6fd',
+          backgroundColor: '#1e293b',
+          padding: { x: 4, y: 2 }
+        }).setOrigin(0.5);
+
+        this.interactables.push({
+          id: 'door_A4_cave',
+          x: caveDoorX,
+          y: caveDoorY,
+          label: GlobalGameState.storyFlags.caveDoorUnlocked ? '下探【A4：幽光菌菇洞穴】' : '查看【地下菌菇洞穴窖门】',
+          onInteract: () => {
+            if (GlobalGameState.storyFlags.caveDoorUnlocked) {
+              this.transitionToRoom('A4', 'from_A1');
+            } else {
+              this.events.emit('show-dialogue', {
+                speaker: '地下酒窖与洞穴入口（尚未开启）',
+                lines: [
+                  '这扇厚重的木门通往餐厅地下的【A4：幽光菌菇洞穴】。',
+                  '老主厨巴隆说：“等你先做好第一份《蜜林浆果烤肉》送给二楼 B1 瞭望台的艾琳，我就把地下洞穴的钥匙交给你！”'
+                ]
+              });
+            }
+          }
+        });
+
+        // 餐厅左侧与中左餐桌
+        this.add.image(235, 408, 'dining_table').setDepth(6);
+        this.add.image(335, 408, 'dining_table').setDepth(6);
+
+        // 艾琳入驻餐厅
+        if (GlobalGameState.storyFlags.eileenInRestaurant) {
+          this.add.image(195, 405, 'npc_eileen').setDepth(10);
+          this.add.text(195, 368, '🏹 艾琳 (常客)', {
+            fontSize: '11px',
+            fontFamily: 'monospace',
+            color: '#8ae0a8',
+            backgroundColor: '#131824',
+            padding: { x: 4, y: 2 }
+          }).setOrigin(0.5);
+
+          this.interactables.push({
+            id: 'npc_eileen_seated',
+            x: 195,
+            y: 412,
+            label: '与餐桌旁的【艾琳】交谈',
+            onInteract: () => {
+              this.events.emit('show-dialogue', {
+                speaker: '巡林少女艾琳（暖炉餐厅常客）',
+                lines: [
+                  '“以前巡夜结束后我总是独自回营地啃干粮，但现在暖炉餐厅就是我最期盼的地方。”',
+                  GlobalGameState.chapter === 3
+                    ? '“今晚外面快下暴风雨了，大家都在等你的压轴招牌大餐《异界团圆什锦炙烤》呢！”'
+                    : '“听说地下【A4 幽光洞穴】里有位迷路的异乡行商老霍克，你的热汤一定也能温暖他！”'
+                ]
+              });
+            }
+          });
+        }
+
+        // 老霍克入驻餐厅（第2章完成后）
+        if (GlobalGameState.storyFlags.hawkInRestaurant) {
+          this.add.image(370, 404, 'npc_hawk').setDepth(10);
+          this.add.text(370, 368, '🎒 老霍克 (常客)', {
+            fontSize: '11px',
+            fontFamily: 'monospace',
+            color: '#93c5fd',
+            backgroundColor: '#131824',
+            padding: { x: 4, y: 2 }
+          }).setOrigin(0.5);
+
+          this.interactables.push({
+            id: 'npc_hawk_seated',
+            x: 370,
+            y: 412,
+            label: '与餐桌旁的【老霍克】交谈',
+            onInteract: () => {
+              this.events.emit('show-dialogue', {
+                speaker: '异乡行商老霍克（暖炉餐厅常客）',
+                lines: [
+                  '“走南闯北几十年，你做的那碗《岩盐黄金菌菇煲》最让我难忘。”',
+                  '“年轻人，不用再害怕自己从哪里来——你看这满屋子的灯光和笑声，这里早就是你的家了！”'
+                ]
+              });
+            }
+          });
+        }
+
+        // 第3章专属：团圆长桌交付点（把终局大餐端上长桌触发结局！）
+        if (GlobalGameState.chapter === 3) {
+          this.add.text(285, 345, '✨【团圆长桌】在此端上终局料理！', {
+            fontSize: '11px',
+            fontFamily: 'monospace',
+            color: '#ffe89e',
+            backgroundColor: '#7a2e1d',
+            padding: { x: 5, y: 2 }
+          }).setOrigin(0.5);
+
+          this.interactables.push({
+            id: 'feast_table_deliver',
+            x: 285,
+            y: 412,
+            label: '🥘 将《异界团圆什锦炙烤》端上【暖炉团圆长桌】',
+            onInteract: () => {
+              const inv = GlobalGameState.inventory;
+              if (inv.cookedDish >= 1 && inv.dishChapter === 3) {
+                const finalQuality = InventoryManager.deliverCookedDish();
+                QuestManager.setState(QUEST_STATES.COMPLETED);
+                GlobalGameState.gameCleared = true;
+                SaveSystem.save();
+                this.refreshObjectiveText();
+                this.events.emit('inventory-updated');
+                SoundFX.fanfare();
+                this.cameras.main.flash(350, 255, 215, 120);
+
+                // 打开阶段 5 终局团圆结局画面
+                this.events.emit('show-ending-modal', {
+                  quality: finalQuality
+                });
+              } else {
+                this.events.emit('show-dialogue', {
+                  speaker: '暖炉团圆长桌（等待终局料理上桌）',
+                  lines: [
+                    '老主厨巴隆、巡林少女艾琳和异乡行商老霍克都已经围坐在暖炉旁，期待着你独立掌勺的招牌大餐！',
+                    '📋 终局食谱《异界团圆什锦炙烤》：集齐【鲜嫩兽肉🥩×1（A2） + 晨露浆果🍒×1（A3） + 夜光菌菇🍄×1（A4）】，在右侧灶台完成三段式火候烹饪后即可端上桌！'
+                  ]
+                });
+              }
+            }
+          });
+        }
+
+        // 石砌暖炉灶台（自适应当前章节食谱与多段火候小游戏）
+        this.add.image(640, 396, 'kitchen_stove').setDepth(6);
+        this.add.text(640, 354, '🔥 暖炉灶台 (多段火候烹饪)', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#ffe89e',
+          backgroundColor: '#1e293b',
+          padding: { x: 4, y: 2 }
+        }).setOrigin(0.5);
+
+        this.interactables.push({
+          id: 'stove_a1',
+          x: 640,
+          y: 412,
+          label: `🔥 在【暖炉灶台】烹饪第 ${GlobalGameState.chapter} 章料理`,
+          onInteract: () => {
+            const cfg = QuestManager.getCurrentConfig();
+            const inv = GlobalGameState.inventory;
+
+            if (inv.cookedDish >= 1 && inv.dishChapter === GlobalGameState.chapter) {
+              this.events.emit('show-dialogue', {
+                speaker: '暖炉灶台（料理已就绪）',
+                lines: [
+                  `你背包里已经有一份刚出锅的【${cfg.dishName} ${cfg.dishIcon}】了！`,
+                  `快把它送给【${cfg.customerName}】吧！`
+                ]
+              });
+              return;
+            }
+
+            if (InventoryManager.hasIngredientsForCurrentChapter()) {
+              QuestManager.acceptOrder();
+              this.events.emit('start-cooking-minigame', {
+                chapterConfig: cfg,
+                onSuccess: (quality) => {
+                  InventoryManager.completeCookingDish(quality);
+                  this.refreshObjectiveText();
+                  SoundFX.fanfare();
+                  this.cameras.main.flash(220, 255, 184, 77);
+                  const badge = quality === 'PERFECT' ? `★主厨级·${cfg.dishName}` : cfg.dishName;
+                  this.spawnFloatingToast(this.player.x, this.player.y, `🔥 出锅：${badge} ${cfg.dishIcon}`, '#ffe89e');
+                  this.events.emit('inventory-updated');
+
+                  this.time.delayedCall(250, () => {
+                    this.events.emit('show-dialogue', {
+                      speaker: quality === 'PERFECT' ? `🔥 完美火候出锅！（★主厨级·${cfg.dishName}）` : `🔥 料理完成！（${cfg.dishName}）`,
+                      lines: [
+                        `香气四溢的【${badge} ${cfg.dishIcon}】已经装盘入包！`,
+                        `任务状态已推进至【已完成料理(DISH_COOKED)】，快送往：${cfg.customerName}！`
+                      ]
+                    });
+                  });
+                }
+              });
+            } else {
+              QuestManager.acceptOrder();
+              this.refreshObjectiveText();
+              this.events.emit('show-dialogue', {
+                speaker: `暖炉灶台（第 ${cfg.chapter} 章食谱检查）`,
+                lines: [
+                  `📖 当前目标料理：《${cfg.dishName} ${cfg.dishIcon}》——需要【${cfg.recipeText}】。`,
+                  `你当前背包拥有：🥩兽肉×${inv.meat} | 🍒浆果×${inv.berry} | 🍄夜光菇×${inv.mushroom}。`,
+                  '食材获取地点：A2 牧场（套索抓肉）、A3 树冠（花苞摘浆果）、A4 地下洞穴（脉动拔夜光菇）！'
+                ]
+              });
+            }
+          }
+        });
+
+        // 老主厨巴隆（贯穿三幕剧的灵魂导师）
+        this.add.image(485, 405, 'npc_chef').setDepth(10);
+        this.add.text(485, 368, '👨‍🍳 老主厨巴隆', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#ffb84d',
+          backgroundColor: '#131824',
+          padding: { x: 4, y: 2 }
+        }).setOrigin(0.5);
+
+        this.interactables.push({
+          id: 'npc_chef_baron',
+          x: 485,
+          y: 412,
+          label: '与【老主厨巴隆】交谈',
+          onInteract: () => {
+            GlobalGameState.storyFlags.metChef = true;
+            QuestManager.acceptOrder();
+            this.refreshObjectiveText();
+            const ch = GlobalGameState.chapter;
+            const qState = GlobalGameState.quest.state;
+
+            if (GlobalGameState.gameCleared) {
+              this.events.emit('show-dialogue', {
+                speaker: '老主厨巴隆（欣慰的笑容）',
+                lines: [
+                  '“好小子，现在的你已经是暖炉餐厅当之无愧的主厨了！”',
+                  '“想再次回味团圆之夜的话，随时可以在右侧灶台再做一份《异界团圆什锦炙烤》端上餐桌！”'
+                ]
+              });
+              return;
+            }
+
+            if (ch === 1) {
+              this.events.emit('show-dialogue', {
+                speaker: '老主厨巴隆（第一章：温暖守夜人）',
+                lines: [
+                  '“别怕，孩子。不管你在原本的世界经历过怎样冰冷的雨夜，既然来到了暖炉亭，这口热锅就能护住你。”',
+                  '“二楼【B1 瞭望台】的巡林姑娘艾琳正独自守夜。去【A2】套 1 块兽肉、去【A3】摘 1 颗浆果，回灶台烤一份《蜜林浆果烤肉》送给她吧！”'
+                ]
+              });
+            } else if (ch === 2) {
+              this.events.emit('show-dialogue', {
+                speaker: '老主厨巴隆（第二章：地下洞穴的异乡客）',
+                lines: [
+                  '“我已经把餐厅右边通往【A4：幽光菌菇洞穴】的地下窖门打开了！”',
+                  '“洞穴里有一位迷失方向的异乡行商【老霍克】。去 A2 抓 1 块兽肉，再去 A4 洞穴趁夜光菌菇发金光脉动时拔取 1 朵【夜光菌菇 🍄】，回灶台炖一盅《岩盐黄金菌菇煲》送给他吧！”'
+                ]
+              });
+            } else if (ch === 3) {
+              this.events.emit('show-dialogue', {
+                speaker: '老主厨巴隆（终章：主勺传承与团圆夜宴）',
+                lines: [
+                  '“嘶……外头快下暴风雨了，我这老腰的旧伤又犯了。但你看左边餐桌，艾琳和老霍克都来避雨聚餐了！”',
+                  '“今晚由你独自掌勺！去集齐【1 肉🥩 + 1 浆果🍒 + 1 夜光菇🍄】，在灶台完成三段式火候的《异界团圆什锦炙烤》，然后端到左边的【团圆长桌】上吧！”'
+                ]
+              });
+            }
+          }
+        });
+      }
+
+      // ========================================================================
+      // 房间 A2：后山呼噜兽牧场（含套索小游戏 + 通往 A4 洞穴的矿道升降梯）
+      // ========================================================================
+      buildRoomA2() {
+        this.spawnMap = {
+          DEFAULT: { x: 120,  y: 390 },
+          from_A1: { x: 120,  y: 390 },
+          from_A3: { x: 1220, y: 170 },
+          from_A4: { x: 1320, y: 390 }
+        };
+
+        this.addWall(16, 40, 444);
+        this.addWall(1434, 40, 444);
+        this.addGround(0, 1450, 444);
+
+        this.addPlatform(860, 4, 356);
+        const m = this.mushroomGroup.create(1050, 428, 'bouncy_mushroom');
+        m.refreshBody();
+        this.addPlatform(1120, 7, 210);
+
+        this.addDoor(80, 428, '返回【A1：暖炉餐厅】', 'A1', 'from_A2');
+        this.addDoor(1280, 194, '攀上【A3：树冠浆果林】', 'A3', 'from_A2');
+
+        // 阶段 5 新增：后山右侧通往 A4 幽光菌菇洞穴的矿道升降梯捷径
+        const liftX = 1355;
+        const liftY = 428;
+        const liftDoor = this.add.image(liftX, liftY - 28, 'door_wood').setDepth(5);
+        liftDoor.setTint(GlobalGameState.storyFlags.mineLiftUnlocked ? 0x38bdf8 : 0x475569);
+        this.add.text(liftX, liftY - 82, GlobalGameState.storyFlags.mineLiftUnlocked ? '🛗 A4 矿道捷径' : '🔒 矿道升降梯', {
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          color: '#bae6fd',
+          backgroundColor: '#1e293b',
+          padding: { x: 4, y: 2 }
+        }).setOrigin(0.5);
+
+        this.interactables.push({
+          id: 'door_A2_to_A4_lift',
+          x: liftX,
+          y: liftY,
+          label: GlobalGameState.storyFlags.mineLiftUnlocked ? '乘坐【矿道升降梯】直达 A4 菌菇洞穴' : '查看【矿道升降梯】（需从 A4 洞穴内部开启）',
+          onInteract: () => {
+            if (GlobalGameState.storyFlags.mineLiftUnlocked) {
+              this.transitionToRoom('A4', 'from_A2');
+            } else {
+              this.events.emit('show-dialogue', {
+                speaker: '后山矿道升降梯（单向锁死）',
+                lines: ['这部古老的矿道升降梯连接着地下的【A4：幽光菌菇洞穴】，需要从洞穴最右侧扳动开关才能打通！']
+              });
+            }
+          }
+        });
+
+        this.add.text(580, 290, '🪢 【A2 牧场套索区】在木桩按互动开启瞄准，看准呼噜兽再按一次抛出！', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#ffe89e',
+          backgroundColor: '#1b263b',
+          padding: { x: 6, y: 3 }
+        }).setOrigin(0.5);
+
+        const createBeastEntity = (startX, minX, maxX, baseSpeed) => {
+          const sprite = this.add.image(startX, 426, 'creature_beast').setDepth(9);
+          const stateTag = this.add.text(startX, 392, '散步中', {
+            fontSize: '11px',
+            fontFamily: 'monospace',
+            color: '#cbd5e1',
+            backgroundColor: '#0f172a',
+            padding: { x: 4, y: 1 }
+          }).setOrigin(0.5).setDepth(11);
+
+          return {
+            sprite,
+            stateTag,
+            minX,
+            maxX,
+            baseSpeed,
+            dir: 1,
+            state: 'WALK',
+            stateTimer: Phaser.Math.Between(1800, 3200)
+          };
+        };
+
+        this.patrolNpcs.push(
+          createBeastEntity(490, 390, 650, 62),
+          createBeastEntity(720, 560, 830, 78)
+        );
+
+        this.lassoRopeGfx = this.add.graphics().setDepth(24);
+        this.lassoReticle = this.add.image(500, 418, 'lasso_reticle').setDepth(25).setVisible(false);
+        this.lassoBanner = this.add.text(580, 332, '🎯 套索瞄准中！等圆圈与呼噜兽重叠时按【E / ★互动】抛出！（移动可取消）', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#131824',
+          backgroundColor: '#ffb84d',
+          padding: { x: 6, y: 3 }
+        }).setOrigin(0.5).setDepth(30).setVisible(false);
+
+        this.lassoReticleDir = 1;
+        this.lassoReticleSpeed = 240;
+
+        this.add.image(335, 424, 'signpost').setTint(0xffb84d);
+        this.interactables.push({
+          id: 'lasso_post',
+          x: 335,
+          y: 424,
+          label: '🪢 进入【套索捕捉模式】获取鲜嫩兽肉',
+          onInteract: () => {
+            if (!InventoryManager.canAdd(1)) {
+              SoundFX.fail();
+              this.spawnFloatingToast(this.player.x, this.player.y, '⚠️ 背包已满 (8/8)！请先回厨房烹饪消耗', '#ff6b6b');
+              return;
+            }
+            QuestManager.acceptOrder();
+            this.startLassoMode();
+          }
+        });
+      }
+
+      startLassoMode() {
+        SoundFX.blip();
+        this.lassoActive = true;
+        this.lassoReticle.x = 410;
+        this.lassoReticle.y = 418;
+        this.lassoReticleDir = 1;
+        this.lassoReticle.setVisible(true);
+        this.lassoBanner.setVisible(true);
+        this.player.setVelocityX(0);
+      }
+
+      stopLassoMode() {
+        this.lassoActive = false;
+        if (this.lassoReticle) this.lassoReticle.setVisible(false);
+        if (this.lassoBanner) this.lassoBanner.setVisible(false);
+        if (this.lassoRopeGfx) this.lassoRopeGfx.clear();
+      }
+
+      throwLassoAtReticle() {
+        if (!this.lassoActive) return;
+
+        const rx = this.lassoReticle.x;
+        let hitBeast = null;
+        for (const b of this.patrolNpcs) {
+          const hitRadius = b.state === 'YAWN' ? 54 : 42;
+          if (Math.abs(b.sprite.x - rx) <= hitRadius) {
+            hitBeast = b;
+            break;
+          }
+        }
+
+        if (hitBeast) {
+          const added = InventoryManager.addItem('meat', 1);
+          this.stopLassoMode();
+          if (added) {
+            SoundFX.pickup();
+            GlobalGameState.lassoSuccessCount++;
+            this.refreshObjectiveText();
+            this.cameras.main.shake(110, 0.004);
+            this.events.emit('inventory-updated');
+            const bonusMsg = hitBeast.state === 'YAWN' ? '🎯 完美破绽命中！+1 鲜嫩兽肉 🥩' : '🪢 套索命中！+1 鲜嫩兽肉 🥩';
+            this.spawnFloatingToast(hitBeast.sprite.x, hitBeast.sprite.y, bonusMsg, '#8ae0a8');
+
+            this.tweens.add({
+              targets: hitBeast.sprite,
+              y: hitBeast.sprite.y - 22,
+              duration: 130,
+              yoyo: true
+            });
+          } else {
+            SoundFX.fail();
+            this.spawnFloatingToast(this.player.x, this.player.y, '⚠️ 背包已满 (8/8)！', '#ff6b6b');
+          }
+        } else {
+          SoundFX.fail();
+          this.cameras.main.shake(70, 0.003);
+          this.spawnFloatingToast(rx, 395, '💨 套空了！看准呼噜兽再抛一次', '#ffb84d');
+        }
+      }
+
+      // ========================================================================
+      // 房间 A3：树冠浆果林（花苞限时唤醒连跳采摘）
+      // ========================================================================
+      buildRoomA3() {
+        this.spawnMap = {
+          DEFAULT: { x: 1120, y: 540 },
+          from_A2: { x: 1120, y: 540 },
+          from_B1: { x: 140,  y: 200 }
+        };
+
+        this.addWall(16, 40, 620);
+        this.addWall(1264, 40, 620);
+
+        this.addGround(880, 1280, 588);
+
+        const m1 = this.mushroomGroup.create(930, 572, 'bouncy_mushroom');
+        m1.refreshBody();
+
+        this.addPlatform(640, 6, 420);
+        const m2 = this.mushroomGroup.create(680, 404, 'bouncy_mushroom');
+        m2.refreshBody();
+
+        this.addPlatform(380, 6, 280);
+        this.addPlatform(60, 8, 240);
+
+        this.addGround(0, 880, 620);
+        const m3 = this.mushroomGroup.create(520, 604, 'bouncy_mushroom');
+        m3.refreshBody();
+
+        const budX = 810;
+        const budY = 392;
+        this.flowerBudSprite = this.add.image(budX, budY, 'flower_bud').setDepth(12);
+        this.budStatusText = this.add.text(budX, budY - 28, '🔔 风铃花苞 (按互动唤醒浆果)', {
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          color: '#ffe89e',
+          backgroundColor: '#1b4332',
+          padding: { x: 5, y: 2 }
+        }).setOrigin(0.5).setDepth(20);
+
+        this.interactables.push({
+          id: 'flower_bud_a3',
+          x: budX,
+          y: budY,
+          label: '🔔 摇响【风铃花苞】（限时 10 秒绽放全部晨露浆果）',
+          onInteract: () => {
+            QuestManager.acceptOrder();
+            this.activateBerryBloomChallenge();
+          }
+        });
+
+        const bushCoords = [
+          { id: 'berry_1', x: 740, y: 394 },
+          { id: 'berry_2', x: 490, y: 254 },
+          { id: 'berry_3', x: 250, y: 214 }
+        ];
+
+        this.berryBushes = bushCoords.map(cfg => {
+          const sprite = this.add.image(cfg.x, cfg.y, 'berry_bush_closed').setDepth(10);
+          const tag = this.add.text(cfg.x, cfg.y - 26, '🔒 未绽放', {
+            fontSize: '10px',
+            fontFamily: 'monospace',
+            color: '#94a3b8',
+            backgroundColor: '#0f172a',
+            padding: { x: 3, y: 1 }
+          }).setOrigin(0.5).setDepth(12);
+          return { ...cfg, sprite, tag, harvested: false };
+        });
+
+        this.addDoor(1180, 572, '下山返回【A2：后山牧场】', 'A2', 'from_A3');
+        this.addDoor(110, 224, '穿出树冠前往【B1：林间瞭望台】', 'B1', 'from_A3');
+      }
+
+      activateBerryBloomChallenge() {
+        SoundFX.bellChime();
+        this.berryChallengeTimer = 10000;
+        this.cameras.main.flash(160, 138, 224, 168);
+        this.spawnFloatingToast(this.flowerBudSprite.x, this.flowerBudSprite.y, '🔔 风铃花苞已唤醒！10 秒内跳过去触碰摘取浆果！', '#8ae0a8');
+
+        for (const b of this.berryBushes) {
+          b.harvested = false;
+          b.sprite.setTexture('berry_bush_bloom');
+          b.sprite.setAlpha(1);
+          b.tag.setText('🍒 触碰摘取！');
+          b.tag.setColor('#ffccd5');
+        }
+      }
+
+      // ========================================================================
+      // 房间 B1：林间瞭望台（第一章顾客：巡林少女艾琳）
+      // ========================================================================
+      buildRoomB1() {
+        this.spawnMap = {
+          DEFAULT: { x: 150, y: 390 },
+          from_A1: { x: 150, y: 390 },
+          from_A3: { x: 980, y: 200 }
+        };
+
+        this.addWall(16, 40, 444);
+        this.addWall(1134, 40, 444);
+        this.addGround(0, 680, 444);
+        this.addPlatform(860, 8, 240);
+
+        this.bridgeConstructed = false;
+        if (GlobalGameState.storyFlags.shortcutBridgeUnlocked) {
+          this.buildShortcutBridgePlatforms();
+        }
+
+        this.addDoor(90, 428, '下楼返回【A1：暖炉餐厅】', 'A1', 'from_B1');
+        this.addDoor(1040, 224, '进入【A3：树冠浆果林】', 'A3', 'from_B1');
+
+        const leverX = 640;
+        const leverY = 424;
+        this.add.image(leverX, leverY, 'signpost').setTint(0xffb84d);
+        this.interactables.push({
+          id: 'bridge_lever',
+          x: leverX,
+          y: leverY,
+          label: GlobalGameState.storyFlags.shortcutBridgeUnlocked ? '木质吊桥捷径（已连通）' : '🔧 拉动机关放下【树冠吊桥捷径】',
+          onInteract: () => {
+            if (!GlobalGameState.storyFlags.shortcutBridgeUnlocked) {
+              SoundFX.fanfare();
+              GlobalGameState.storyFlags.shortcutBridgeUnlocked = true;
+              this.buildShortcutBridgePlatforms();
+              this.refreshObjectiveText();
+              SaveSystem.save();
+              this.cameras.main.shake(140, 0.006);
+              this.events.emit('show-dialogue', {
+                speaker: '机关触发（树冠吊桥捷径已开启！）',
+                lines: [
+                  '⚙️ 咔哒——轰隆！连接【B1：林间瞭望台】与右上角【A3：树冠浆果林】的阶梯木吊桥已经稳稳放下！'
+                ]
+              });
+            } else {
+              this.events.emit('show-dialogue', {
+                speaker: '木质吊桥捷径',
+                lines: ['连接【B1 瞭望台】与【A3 树冠浆果林】的捷径吊桥已完全连通。']
+              });
+            }
+          }
+        });
+
+        this.eileenSprite = this.add.image(420, 423, 'npc_eileen').setDepth(10);
+        this.eileenTag = this.add.text(420, 386, '🏹 巡林少女艾琳 (顾客1)', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#8ae0a8',
+          backgroundColor: '#131824',
+          padding: { x: 4, y: 2 }
+        }).setOrigin(0.5);
+
+        this.interactables.push({
+          id: 'npc_eileen_b1',
+          x: 420,
+          y: 428,
+          label: '与【巡林少女艾琳】交谈 / 交付料理',
+          onInteract: () => {
+            GlobalGameState.storyFlags.metEileen = true;
+            QuestManager.acceptOrder();
+            this.refreshObjectiveText();
+
+            const inv = GlobalGameState.inventory;
+
+            // 交付第一章料理《蜜林浆果烤肉》
+            if (GlobalGameState.chapter === 1 && inv.cookedDish >= 1 && inv.dishChapter === 1) {
+              const deliveredQuality = InventoryManager.deliverCookedDish();
+              GlobalGameState.storyFlags.eileenInRestaurant = true;
+              GlobalGameState.storyFlags.caveDoorUnlocked = true; // 解锁地下 A4 菌菇洞穴！
+
+              if (!GlobalGameState.storyFlags.shortcutBridgeUnlocked) {
+                GlobalGameState.storyFlags.shortcutBridgeUnlocked = true;
+                this.buildShortcutBridgePlatforms();
+              }
+
+              // 推进至第二章：异乡行商老霍克篇
+              QuestManager.advanceToChapter(2);
+              this.refreshObjectiveText();
+              this.events.emit('inventory-updated');
+              SoundFX.fanfare();
+              this.cameras.main.flash(240, 138, 224, 168);
+              this.spawnFloatingToast(420, 395, '🎉 第一章完成！已解锁【A4 幽光菌菇洞穴】！', '#8ae0a8');
+
+              const isPerfect = deliveredQuality === 'PERFECT';
+              this.events.emit('show-dialogue', {
+                speaker: isPerfect ? '巡林少女艾琳（品尝 ★主厨级美味！）' : '巡林少女艾琳（第一章完成！）',
+                lines: [
+                  isPerfect
+                    ? '“天哪……外焦里嫩的兽肉裹着温火慢熬的晨露浆果蜜汁，咬下去的一瞬间整个人都暖透了！！（★触发完美火候隐藏赞美）”'
+                    : '“哇，是热腾腾的《蜜林浆果烤肉》！酸甜的果香一下子驱散了夜风的寒意，谢谢你！”',
+                  '“其实独自在黑夜里守望总让我害怕……但吃到你做的热菜，我觉得自己不再是孤单一人了。”',
+                  '“【新区域开启】：我已经通知巴隆大叔打开了 A1 餐厅右侧通往【A4：幽光菌菇洞穴】的窖门，快下楼去探索新食材与第二位顾客吧！”'
+                ]
+              });
+              return;
+            }
+
+            if (GlobalGameState.chapter >= 2) {
+              this.events.emit('show-dialogue', {
+                speaker: '巡林少女艾琳',
+                lines: [
+                  '“我已经成了暖炉餐厅的常客啦！巴隆大叔已经打开了 A1 餐厅右侧的【A4：幽光菌菇洞穴】窖门。”',
+                  '“听说洞穴里有位迷路的异乡行商【老霍克】，快去看看他需要什么热菜吧！”'
+                ]
+              });
+              return;
+            }
+
+            this.events.emit('show-dialogue', {
+              speaker: '巡林少女艾琳（第一章顾客订单）',
+              lines: [
+                '“呼……夜里瞭望台的风真冷。我今晚值夜班又冷又累，真想吃一份酸甜多汁的《蜜林浆果烤肉》……”',
+                '“📋 订单需求：去【A2 牧场】套取【鲜嫩兽肉🥩×1】，去右上角【A3 树冠】唤醒花苞摘取【晨露浆果🍒×1】，回【A1 灶台】烤好后送给我！”'
+              ]
+            });
+          }
+        });
+      }
+
+      buildShortcutBridgePlatforms() {
+        if (this.bridgeConstructed) return;
+        this.bridgeConstructed = true;
+        const steps = [
+          { x: 670, y: 375, w: 2 },
+          { x: 745, y: 310, w: 3 },
+          { x: 830, y: 245, w: 1 }
+        ];
+        steps.forEach(s => {
+          for (let i = 0; i < s.w; i++) {
+            const p = this.groundGroup.create(s.x + i * 32, s.y, 'tile_bridge');
+            p.refreshBody();
+          }
+        });
+      }
+
+      // ========================================================================
+      // 房间 A4：幽光菌菇洞穴（阶段 5 新增：夜光菌菇时机拔取 + 顾客2异乡行商老霍克）
+      // ========================================================================
+      buildRoomA4() {
+        this.spawnMap = {
+          DEFAULT: { x: 120,  y: 410 },
+          from_A1: { x: 120,  y: 410 },
+          from_A2: { x: 1220, y: 410 }
+        };
+
+        this.addWall(16, 40, 468);
+        this.addWall(1334, 40, 468);
+
+        // 洞穴高低岩层与发光弹力菌伞
+        this.addGround(0, 520, 468, 'tile_cave');
+        this.addPlatform(480, 5, 365);
+        const m1 = this.mushroomGroup.create(690, 452, 'bouncy_mushroom');
+        m1.refreshBody();
+        this.addGround(640, 1350, 468, 'tile_cave');
+        this.addPlatform(780, 5, 290);
+
+        // 左门返回 A1 厨房
+        this.addDoor(80, 452, '爬回【A1：暖炉餐厅】', 'A1', 'from_A4');
+
+        // 右门：矿道升降梯捷径（直通 A2 后山牧场）
+        const liftX = 1255;
+        const liftY = 452;
+        this.add.image(liftX, liftY - 28, 'door_wood').setDepth(5).setTint(0x38bdf8);
+        this.add.text(liftX, liftY - 82, '🛗 A2 牧场升降梯', {
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          color: '#bae6fd',
+          backgroundColor: '#1e293b',
+          padding: { x: 4, y: 2 }
+        }).setOrigin(0.5);
+
+        this.interactables.push({
+          id: 'cave_lift_to_a2',
+          x: liftX,
+          y: liftY,
+          label: GlobalGameState.storyFlags.mineLiftUnlocked
+            ? '乘坐【矿道升降梯】直达 A2 呼噜兽牧场'
+            : '🔧 启动【矿道升降梯捷径】并前往 A2 牧场',
+          onInteract: () => {
+            if (!GlobalGameState.storyFlags.mineLiftUnlocked) {
+              GlobalGameState.storyFlags.mineLiftUnlocked = true;
+              SoundFX.fanfare();
+              SaveSystem.save();
+            }
+            this.transitionToRoom('A2', 'from_A4');
+          }
+        });
+
+        this.add.text(640, 195, '🍄 【A4 夜光菌菇区】观察菌菇脉动，在【✨黄金松动期】按互动一拔即出！', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#bae6fd',
+          backgroundColor: '#1e1b2e',
+          padding: { x: 6, y: 3 }
+        }).setOrigin(0.5);
+
+        // 3 株脉动夜光菌菇（不同相位，周期 3200ms，其中 0~1350ms 为黄金松动期）
+        const shroomSpots = [
+          { id: 'shroom_1', x: 340, y: 451, phaseOffset: 0 },
+          { id: 'shroom_2', x: 560, y: 348, phaseOffset: 1100 },
+          { id: 'shroom_3', x: 860, y: 273, phaseOffset: 2100 }
+        ];
+
+        shroomSpots.forEach(cfg => {
+          const sprite = this.add.image(cfg.x, cfg.y, 'night_shroom_normal').setDepth(10);
+          const tag = this.add.text(cfg.x, cfg.y - 28, '泥土紧绷', {
+            fontSize: '10px',
+            fontFamily: 'monospace',
+            color: '#94a3b8',
+            backgroundColor: '#090d16',
+            padding: { x: 4, y: 1 }
+          }).setOrigin(0.5).setDepth(12);
+
+          const shroomObj = {
+            ...cfg,
+            sprite,
+            tag,
+            cooldown: 0,
+            isGoldenWindow: false
+          };
+          this.caveShrooms.push(shroomObj);
+
+          this.interactables.push({
+            id: cfg.id,
+            x: cfg.x,
+            y: cfg.y,
+            label: '🍄 拔取【夜光菌菇】（需看准✨黄金脉动期）',
+            onInteract: () => {
+              if (shroomObj.cooldown > 0) {
+                SoundFX.fail();
+                this.spawnFloatingToast(cfg.x, cfg.y, '⏳ 菌丝正在重新生长，请稍候...', '#94a3b8');
+                return;
+              }
+              if (!InventoryManager.canAdd(1)) {
+                SoundFX.fail();
+                this.spawnFloatingToast(cfg.x, cfg.y, '⚠️ 背包已满 (8/8)！请先回厨房烹饪', '#ff6b6b');
+                return;
+              }
+              if (shroomObj.isGoldenWindow) {
+                InventoryManager.addItem('mushroom', 1);
+                GlobalGameState.shroomPickCount++;
+                shroomObj.cooldown = 3500;
+                SoundFX.pickup();
+                this.refreshObjectiveText();
+                this.events.emit('inventory-updated');
+                this.spawnFloatingToast(cfg.x, cfg.y, '✨ 完美时机拔取！+1 夜光菌菇 🍄', '#ffe89e');
+              } else {
+                shroomObj.cooldown = 1800;
+                SoundFX.fail();
+                this.cameras.main.shake(90, 0.004);
+                this.spawnFloatingToast(cfg.x, cfg.y, '💥 泥土太紧断根了！等菌盖发金光时再拔！', '#ff6b6b');
+              }
+            }
+          });
+        });
+
+        // 顾客 2：异乡行商老霍克
+        this.hawkSprite = this.add.image(1040, 446, 'npc_hawk').setDepth(10);
+        this.add.text(1040, 408, '🎒 异乡行商老霍克 (顾客2)', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#93c5fd',
+          backgroundColor: '#131824',
+          padding: { x: 4, y: 2 }
+        }).setOrigin(0.5);
+
+        this.interactables.push({
+          id: 'npc_hawk_a4',
+          x: 1040,
+          y: 452,
+          label: '与【异乡行商老霍克】交谈 / 交付料理',
+          onInteract: () => {
+            GlobalGameState.storyFlags.metHawk = true;
+            QuestManager.acceptOrder();
+            this.refreshObjectiveText();
+
+            const inv = GlobalGameState.inventory;
+
+            // 分支 1：交付第二章料理《岩盐黄金菌菇煲》
+            if (GlobalGameState.chapter === 2 && inv.cookedDish >= 1 && inv.dishChapter === 2) {
+              const deliveredQuality = InventoryManager.deliverCookedDish();
+              GlobalGameState.storyFlags.hawkInRestaurant = true;
+              GlobalGameState.storyFlags.mineLiftUnlocked = true;
+
+              // 推进至第三章（终章：异界团圆什锦炙烤）
+              QuestManager.advanceToChapter(3);
+              this.refreshObjectiveText();
+              this.events.emit('inventory-updated');
+              SoundFX.fanfare();
+              this.cameras.main.flash(240, 147, 197, 253);
+              this.spawnFloatingToast(1040, 415, '🎉 第二章完成！老霍克已入驻餐厅，终章开启！', '#93c5fd');
+
+              const isPerfect = deliveredQuality === 'PERFECT';
+              this.events.emit('show-dialogue', {
+                speaker: isPerfect ? '异乡行商老霍克（品尝 ★主厨级菌菇煲！）' : '异乡行商老霍克（第二章完成！）',
+                lines: [
+                  isPerfect
+                    ? '“咕嘟……天哪！这口文火慢炖的黄金菌菇高汤混合着炙烤兽肉的醇香，简直比我记忆里故乡老母亲炖的还要鲜美！！（★触发完美火候隐藏赞美）”'
+                    : '“啊……这碗热气腾腾的《岩盐黄金菌菇煲》一下肚，连日迷路的疲惫全都化开了！”',
+                  '“小兄弟，我看得出你眼里也有异乡客的孤独。但你要记住——所谓故乡，从来不是地图上的某个坐标，而是有人愿意为你留一盏热汤灯火的地方。”',
+                  '“我已经帮你启动了右边的【🛗 矿道升降梯】，可以直接升回 A2 牧场！我也去【A1 暖炉餐厅】找巴隆老哥叙旧了，今晚餐厅的团圆夜宴就交给你掌勺了！”'
+                ]
+              });
+              return;
+            }
+
+            if (GlobalGameState.chapter >= 3) {
+              this.events.emit('show-dialogue', {
+                speaker: '异乡行商老霍克',
+                lines: [
+                  '“我已经把行囊搬到【A1 暖炉餐厅】的餐桌旁啦！右边的【矿道升降梯】也已经通往 A2 牧场。”',
+                  '“快集齐【1 肉🥩 + 1 浆果🍒 + 1 夜光菇🍄】，回厨房做出终局大餐《异界团圆什锦炙烤》端上团圆长桌吧！”'
+                ]
+              });
+              return;
+            }
+
+            this.events.emit('show-dialogue', {
+              speaker: '异乡行商老霍克（第二章顾客订单）',
+              lines: [
+                '“唉……跨越半个大陆来到这片幽暗岩洞，干粮早就冷透了，真想念家乡那口鲜掉眉毛的热汤啊。”',
+                '“📋 订单需求：请帮我做一碗《岩盐黄金菌菇煲》！需要【鲜嫩兽肉🥩×1（A2）】+【夜光菌菇🍄×1（趁洞穴菌菇发金光松动时拔取）】，回 A1 灶台炖好后送给我！”'
+              ]
+            });
+          }
+        });
+      }
+
+      refreshObjectiveText() {
+        QuestManager.syncWithInventory();
+        const ch = GlobalGameState.chapter;
+        const cfg = CHAPTER_CONFIGS[ch];
+        const qState = GlobalGameState.quest.state;
+        const inv = GlobalGameState.inventory;
+
+        if (GlobalGameState.gameCleared) {
+          GlobalGameState.currentObjective = '🏆 全剧情通关！你已在异世界找到温暖归属（可继续自由探索或再做团圆宴）';
+          return;
+        }
+
+        if (qState === QUEST_STATES.DISH_COOKED) {
+          GlobalGameState.currentObjective = `[第${ch}章]《${cfg.dishName}》已出锅！快送往：${cfg.customerName}`;
+        } else if (qState === QUEST_STATES.INGREDIENTS_READY) {
+          GlobalGameState.currentObjective = `[第${ch}章] 材料已齐备！返回【A1 厨房灶台】烹饪《${cfg.dishName}》`;
+        } else {
+          if (ch === 1) {
+            GlobalGameState.currentObjective = `[第1章·艾琳] 收集 兽肉🥩(${inv.meat}/1) + 浆果🍒(${inv.berry}/1) 烤制《蜜林浆果烤肉》`;
+          } else if (ch === 2) {
+            GlobalGameState.currentObjective = `[第2章·老霍克] 收集 兽肉🥩(${inv.meat}/1) + A4夜光菇🍄(${inv.mushroom}/1) 炖制《黄金菌菇煲》`;
+          } else {
+            GlobalGameState.currentObjective = `[终章·团圆宴] 集齐 🥩(${inv.meat}/1)+🍒(${inv.berry}/1)+🍄(${inv.mushroom}/1) 回灶台做终局大餐`;
+          }
+        }
+      }
+
+      handleMushroomBounce(player, mushroom) {
+        if (player.body.touching.down && mushroom.body.touching.up) {
+          SoundFX.bounce();
+          player.setVelocityY(-640);
+          GlobalGameState.mushroomBounceCount++;
+          this.tweens.add({
+            targets: mushroom,
+            scaleY: 0.65,
+            scaleX: 1.25,
+            duration: 90,
+            yoyo: true,
+            ease: 'Quad.easeOut'
+          });
+        }
+      }
+
+      triggerSafeRespawn() {
+        if (this.isRespawning) return;
+        this.isRespawning = true;
+        SoundFX.fail();
+        GlobalGameState.respawnCount++;
+
+        this.player.setVelocity(0, 0);
+        this.player.body.enable = false;
+        this.cameras.main.flash(220, 255, 232, 158);
+        this.time.delayedCall(180, () => {
+          this.player.setPosition(this.lastSafePos.x, this.lastSafePos.y - 10);
+          this.player.body.enable = true;
+          this.isRespawning = false;
+        });
+      }
+
+      update(time, delta) {
+        if (this.isRespawning || this.isTransitioning) return;
+
+        if (this.doorCooldown > 0) {
+          this.doorCooldown = Math.max(0, this.doorCooldown - delta);
+        }
+
+        // 更新 A2 呼噜兽巡逻与破绽状态
+        for (const npc of this.patrolNpcs) {
+          npc.stateTimer -= delta;
+          if (npc.stateTimer <= 0) {
+            const roll = Phaser.Math.Between(1, 100);
+            if (roll <= 40) {
+              npc.state = 'YAWN';
+              npc.stateTimer = 2200;
+              npc.stateTag.setText('✨打哈欠(快套!)');
+              npc.stateTag.setColor('#ffe89e');
+            } else if (roll <= 75) {
+              npc.state = 'WALK';
+              npc.stateTimer = 2600;
+              npc.stateTag.setText('散步中');
+              npc.stateTag.setColor('#cbd5e1');
+            } else {
+              npc.state = 'RUN';
+              npc.stateTimer = 1600;
+              npc.stateTag.setText('💨小跑中');
+              npc.stateTag.setColor('#94a3b8');
+            }
+          }
+
+          const mult = npc.state === 'YAWN' ? 0 : (npc.state === 'RUN' ? 1.65 : 1);
+          npc.sprite.x += npc.baseSpeed * mult * npc.dir * (delta / 1000);
+          if (npc.sprite.x > npc.maxX) {
+            npc.dir = -1;
+            npc.sprite.setFlipX(true);
+          } else if (npc.sprite.x < npc.minX) {
+            npc.dir = 1;
+            npc.sprite.setFlipX(false);
+          }
+          npc.stateTag.setPosition(npc.sprite.x, npc.sprite.y - 34);
+        }
+
+        // 更新 A2 套索准星
+        if (this.lassoActive && this.lassoReticle) {
+          this.lassoReticle.x += this.lassoReticleSpeed * this.lassoReticleDir * (delta / 1000);
+          if (this.lassoReticle.x > 840) {
+            this.lassoReticle.x = 840;
+            this.lassoReticleDir = -1;
+          } else if (this.lassoReticle.x < 390) {
+            this.lassoReticle.x = 390;
+            this.lassoReticleDir = 1;
+          }
+          this.lassoReticle.angle += 2.5;
+
+          this.lassoRopeGfx.clear();
+          this.lassoRopeGfx.lineStyle(2, 0xffb84d, 0.85);
+          this.lassoRopeGfx.lineBetween(this.player.x, this.player.y - 8, this.lassoReticle.x, this.lassoReticle.y);
+        }
+
+        // 更新 A3 风铃花苞限时连摘
+        if (this.currentRoomKey === 'A3' && this.berryChallengeTimer > 0) {
+          this.berryChallengeTimer = Math.max(0, this.berryChallengeTimer - delta);
+          const sec = (this.berryChallengeTimer / 1000).toFixed(1);
+          this.budStatusText.setText(`⏳ 浆果绽放倒计时: ${sec}s`);
+          this.budStatusText.setColor('#8ae0a8');
+
+          for (const b of this.berryBushes) {
+            if (!b.harvested) {
+              const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, b.x, b.y);
+              if (dist < 46) {
+                if (InventoryManager.canAdd(1)) {
+                  b.harvested = true;
+                  b.sprite.setAlpha(0.35);
+                  b.tag.setText('✅ 已摘取');
+                  b.tag.setColor('#8ae0a8');
+                  InventoryManager.addItem('berry', 1);
+                  SoundFX.pickup();
+                  GlobalGameState.berryPickCount++;
+                  this.refreshObjectiveText();
+                  this.events.emit('inventory-updated');
+                  this.spawnFloatingToast(b.x, b.y, '+1 晨露浆果 🍒', '#ffccd5');
+                } else {
+                  this.spawnFloatingToast(b.x, b.y, '⚠️ 背包已满 (8/8)！', '#ff6b6b');
+                }
+              }
+            }
+          }
+
+          if (this.berryChallengeTimer === 0) {
+            this.budStatusText.setText('🔔 风铃花苞 (按互动重新唤醒浆果)');
+            this.budStatusText.setColor('#ffe89e');
+            for (const b of this.berryBushes) {
+              b.harvested = false;
+              b.sprite.setTexture('berry_bush_closed');
+              b.sprite.setAlpha(1);
+              b.tag.setText('🔒 未绽放');
+              b.tag.setColor('#94a3b8');
+            }
+          }
+        }
+
+        // 阶段 5 新增：更新 A4 夜光菌菇泥土脉动窗口
+        if (this.currentRoomKey === 'A4') {
+          for (const shroom of this.caveShrooms) {
+            if (shroom.cooldown > 0) {
+              shroom.cooldown = Math.max(0, shroom.cooldown - delta);
+              shroom.isGoldenWindow = false;
+              shroom.sprite.setAlpha(0.35);
+              shroom.sprite.setTexture('night_shroom_normal');
+              shroom.tag.setText(`⏳ 生长中 ${(shroom.cooldown / 1000).toFixed(1)}s`);
+              shroom.tag.setColor('#64748b');
+            } else {
+              shroom.sprite.setAlpha(1);
+              const cyclePos = (time + shroom.phaseOffset) % 3200;
+              if (cyclePos < 1400) {
+                shroom.isGoldenWindow = true;
+                shroom.sprite.setTexture('night_shroom_pulse');
+                shroom.tag.setText('✨松动期(按E拔取!)');
+                shroom.tag.setColor('#ffe89e');
+              } else {
+                shroom.isGoldenWindow = false;
+                shroom.sprite.setTexture('night_shroom_normal');
+                shroom.tag.setText('🔒 泥土紧绷(勿拔)');
+                shroom.tag.setColor('#94a3b8');
+              }
+            }
+          }
+        }
+
+        const uiScene = this.scene.get('UIScene');
+        const isModalBusy = uiScene && (uiScene.isDialogueActive || uiScene.isCookingActive || uiScene.isEndingActive);
+
+        if (Phaser.Input.Keyboard.JustDown(this.keys.debugG)) {
+          GlobalGameState.debugVisible = !GlobalGameState.debugVisible;
+        }
+
+        if (Phaser.Input.Keyboard.JustDown(this.keys.resetR) && !isModalBusy) {
+          this.stopLassoMode();
+          this.player.setPosition(this.spawnPoint.x, this.spawnPoint.y);
+          this.player.setVelocity(0, 0);
+        }
+
+        const vInput = GlobalGameState.virtualInput;
+        const onGround = this.player.body.blocked.down;
+
+        if (onGround && this.player.x > 48 && this.player.x < this.roomWidth - 48) {
+          this.lastSafePos.x = Math.round(this.player.x);
+          this.lastSafePos.y = Math.round(this.player.y);
+        }
+
+        if (onGround) {
+          this.coyoteTimer = this.coyoteTimeMax;
+        } else {
+          this.coyoteTimer = Math.max(0, this.coyoteTimer - delta);
+        }
+
+        const keyJumpJustDown =
+          Phaser.Input.Keyboard.JustDown(this.cursors.up) ||
+          Phaser.Input.Keyboard.JustDown(this.keys.up) ||
+          Phaser.Input.Keyboard.JustDown(this.keys.space) ||
+          vInput.jumpJustDown;
+
+        vInput.jumpJustDown = false;
+
+        if (keyJumpJustDown && !isModalBusy) {
+          if (this.lassoActive) this.stopLassoMode();
+          this.jumpBufferTimer = this.jumpBufferMax;
+        } else {
+          this.jumpBufferTimer = Math.max(0, this.jumpBufferTimer - delta);
+        }
+
+        const moveLeft = !isModalBusy && (this.cursors.left.isDown || this.keys.left.isDown || vInput.left);
+        const moveRight = !isModalBusy && (this.cursors.right.isDown || this.keys.right.isDown || vInput.right);
+
+        if (moveLeft || moveRight) {
+          if (this.lassoActive) this.stopLassoMode();
+        }
+
+        if (moveLeft) {
+          this.player.setVelocityX(-this.moveSpeed);
+          this.player.setFlipX(true);
+        } else if (moveRight) {
+          this.player.setVelocityX(this.moveSpeed);
+          this.player.setFlipX(false);
+        } else {
+          this.player.setVelocityX(0);
+        }
+
+        if (this.jumpBufferTimer > 0 && this.coyoteTimer > 0 && !isModalBusy) {
+          SoundFX.jump();
+          this.player.setVelocityY(this.jumpVelocity);
+          this.jumpBufferTimer = 0;
+          this.coyoteTimer = 0;
+        }
+
+        const isHoldingJump =
+          this.cursors.up.isDown ||
+          this.keys.up.isDown ||
+          this.keys.space.isDown ||
+          vInput.jumpPressed;
+
+        if (!isHoldingJump && this.player.body.velocity.y < -180) {
+          this.player.setVelocityY(this.player.body.velocity.y * 0.65);
+        }
+
+        if (onGround && Math.abs(this.player.body.velocity.x) > 10) {
+          this.walkAnimTimer += delta;
+          if (this.walkAnimTimer > 140) {
+            this.walkAnimTimer = 0;
+            const nextKey = this.player.texture.key === 'player_idle' ? 'player_walk' : 'player_idle';
+            this.player.setTexture(nextKey);
+          }
+        } else {
+          this.player.setTexture(onGround ? 'player_idle' : 'player_walk');
+        }
+
+        if (this.player.y > this.roomHeight + 30) {
+          this.triggerSafeRespawn();
+        }
+
+        const interactTriggered =
+          Phaser.Input.Keyboard.JustDown(this.keys.interactE) ||
+          Phaser.Input.Keyboard.JustDown(this.keys.interactF) ||
+          vInput.interactJustDown;
+
+        if (this.lassoActive && !isModalBusy) {
+          this.promptText.setText('🎯 [E / ★互动] 立即抛出套索！');
+          this.promptText.setPosition(this.player.x, this.player.y - 46);
+          this.promptText.setVisible(true);
+          if (interactTriggered) {
+            vInput.interactJustDown = false;
+            this.throwLassoAtReticle();
+          }
+        } else {
+          let closestItem = null;
+          let minDist = 68;
+          for (const item of this.interactables) {
+            const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, item.x, item.y);
+            if (dist < minDist) {
+              minDist = dist;
+              closestItem = item;
+            }
+          }
+
+          if (closestItem && !isModalBusy) {
+            this.promptText.setText(`[E / ★互动] ${closestItem.label}`);
+            this.promptText.setPosition(closestItem.x, closestItem.y - 52);
+            this.promptText.setVisible(true);
+
+            if (interactTriggered) {
+              vInput.interactJustDown = false;
+              closestItem.onInteract();
+            }
+          } else {
+            this.promptText.setVisible(false);
+            if (!isModalBusy) {
+              vInput.interactJustDown = false;
+            }
+          }
+
+          GlobalGameState.telemetry.nearTarget = closestItem ? closestItem.label : '无';
+        }
+
+        GlobalGameState.telemetry.x = Math.round(this.player.x);
+        GlobalGameState.telemetry.y = Math.round(this.player.y);
+        GlobalGameState.telemetry.vx = Math.round(this.player.body.velocity.x);
+        GlobalGameState.telemetry.vy = Math.round(this.player.body.velocity.y);
+        GlobalGameState.telemetry.grounded = onGround;
+        GlobalGameState.telemetry.coyoteTimer = Math.round(this.coyoteTimer);
+        GlobalGameState.telemetry.safeX = this.lastSafePos.x;
+        GlobalGameState.telemetry.safeY = this.lastSafePos.y;
+      }
+    }
+
+    // ----------------------------------------------------------------------------
+    // 4. 常驻 UI、背包栏、多段火候烹饪、结局面板与存档控制场景 (UIScene)
+    // ----------------------------------------------------------------------------
+    class UIScene extends Phaser.Scene {
+      constructor() {
+        super({ key: 'UIScene' });
+      }
+
+      create() {
+        this.input.addPointer(2);
+        this.isDialogueActive = false;
+        this.dialogueLines = [];
+        this.dialogueIndex = 0;
+
+        this.isCookingActive = false;
+        this.activeChapterCfg = CHAPTER_CONFIGS[1];
+        this.cookingHeat = 30;
+        this.cookingProgress = 0;
+        this.cookingMistakeTime = 0;
+        this.isStokingFire = false;
+        this.cookingCallback = null;
+
+        this.isEndingActive = false;
+
+        // 顶部主目标栏
+        const topBar = this.add.graphics();
+        topBar.fillStyle(0x0f172a, 0.9);
+        topBar.fillRect(10, 8, 468, 32);
+        topBar.lineStyle(2, 0xffb84d, 0.9);
+        topBar.strokeRect(10, 8, 468, 32);
+
+        this.objectiveText = this.add.text(16, 16, '', {
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          color: '#ffe89e'
+        });
+
+        // 顶部功能按钮组（音效开关、调试面板、重置存档）
+        this.soundBtnText = this.createTopButton(484, 8, 96, 32, '🔊 音效:开', () => {
+          SoundFX.muted = !SoundFX.muted;
+          this.soundBtnText.setText(SoundFX.muted ? '🔇 音效:关' : '🔊 音效:开');
+          if (!SoundFX.muted) SoundFX.blip();
+        });
+
+        this.createTopButton(586, 8, 98, 32, '🛠 遥测(G)', () => {
+          GlobalGameState.debugVisible = !GlobalGameState.debugVisible;
+        });
+
+        this.createTopButton(690, 8, 100, 32, '🗑 重置存档', () => {
+          if (this.isCookingActive) return;
+          SaveSystem.resetAll();
+          this.isEndingActive = false;
+          if (this.endingContainer) this.endingContainer.setVisible(false);
+          const world = this.scene.get('WorldScene');
+          if (world) {
+            world.scene.restart({ room: 'A', from: 'START' });
+          }
+        });
+
+        // 右上角紧凑型全食材背包栏 UI
+        this.invBox = this.add.rectangle(640, 62, 300, 32, 0x131824, 0.92)
+          .setStrokeStyle(2, 0x52b788, 0.95);
+        this.invText = this.add.text(640, 62, '', {
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          fontStyle: 'bold',
+          color: '#f8fafc'
+        }).setOrigin(0.5);
+
+        // 左上角实时遥测调试面板
+        this.debugBg = this.add.graphics();
+        this.debugBg.fillStyle(0x090d16, 0.82);
+        this.debugBg.fillRect(10, 46, 360, 148);
+        this.debugBg.lineStyle(1, 0x41a67e, 0.85);
+        this.debugBg.strokeRect(10, 46, 360, 148);
+
+        this.debugText = this.add.text(18, 52, '', {
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          color: '#8ae0a8',
+          lineSpacing: 3
+        });
+
+        this.createTouchControls();
+        this.createDialogueBox();
+        this.createCookingMinigameModal();
+        this.createEndingCutsceneModal();
+
+        const worldScene = this.scene.get('WorldScene');
+        worldScene.events.on('show-dialogue', (data) => {
+          this.openDialogue(data.speaker, data.lines);
+        });
+        worldScene.events.on('inventory-updated', () => {
+          this.tweens.add({
+            targets: [this.invBox, this.invText],
+            scaleX: 1.07,
+            scaleY: 1.12,
+            duration: 110,
+            yoyo: true
+          });
+        });
+        worldScene.events.on('start-cooking-minigame', (cfg) => {
+          this.openCookingMinigame(cfg);
+        });
+        worldScene.events.on('show-ending-modal', (data) => {
+          this.openEndingModal(data.quality);
+        });
+
+        this.cookKeys = this.input.keyboard.addKeys({
+          space: Phaser.Input.Keyboard.KeyCodes.SPACE,
+          e: Phaser.Input.Keyboard.KeyCodes.E,
+          w: Phaser.Input.Keyboard.KeyCodes.W,
+          up: Phaser.Input.Keyboard.KeyCodes.UP
+        });
+
+        this.input.keyboard.on('keydown-SPACE', () => {
+          if (this.isDialogueActive) this.advanceDialogue();
+        });
+        this.input.keyboard.on('keydown-E', () => {
+          if (this.isDialogueActive) this.advanceDialogue();
+        });
+        this.input.keyboard.on('keydown-ENTER', () => {
+          if (this.isDialogueActive) this.advanceDialogue();
+        });
+      }
+
+      // 构建支持 2 段/3 段式变奏的火候烹饪面板
+      createCookingMinigameModal() {
+        this.cookingContainer = this.add.container(0, 0).setDepth(120).setVisible(false);
+
+        const panelBg = this.add.rectangle(465, 235, 460, 265, 0x131824, 0.96)
+          .setStrokeStyle(3, 0xff8c42, 1);
+
+        this.cookTitleText = this.add.text(465, 124, '', {
+          fontSize: '13px',
+          fontFamily: 'monospace',
+          fontStyle: 'bold',
+          color: '#ffe89e',
+          backgroundColor: '#7a2e1d',
+          padding: { x: 8, y: 4 }
+        }).setOrigin(0.5);
+
+        this.cookPhaseText = this.add.text(465, 158, '', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#8ae0a8'
+        }).setOrigin(0.5);
+
+        this.barLeftX = 285;
+        this.barWidth = 360;
+        const barTrack = this.add.rectangle(465, 200, this.barWidth, 28, 0x1e293b, 1)
+          .setStrokeStyle(2, 0x64748b);
+
+        this.targetZoneRect = this.add.rectangle(500, 200, 90, 24, 0x41a67e, 0.78)
+          .setStrokeStyle(1.5, 0x8ae0a8);
+
+        this.heatPointer = this.add.rectangle(350, 200, 10, 36, 0xffb84d, 1)
+          .setStrokeStyle(2, 0xffffff);
+
+        this.heatStatusText = this.add.text(465, 232, '当前火候：适中', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#ffe89e'
+        }).setOrigin(0.5);
+
+        const progBg = this.add.rectangle(465, 266, 360, 18, 0x0f172a, 1)
+          .setStrokeStyle(1.5, 0x94a3b8);
+        this.progFill = this.add.rectangle(285, 266, 2, 14, 0xffb84d, 1).setOrigin(0, 0.5);
+        this.progLabel = this.add.text(465, 266, '烹饪进度: 0%', {
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          color: '#ffffff'
+        }).setOrigin(0.5);
+
+        const stokeBtn = this.add.rectangle(405, 322, 230, 46, 0xd94e34, 0.92)
+          .setStrokeStyle(2, 0xffe89e)
+          .setInteractive({ useHandCursor: true });
+        const stokeTxt = this.add.text(405, 322, '🔥 按住鼓风升温 (或按住 Space)', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          fontStyle: 'bold',
+          color: '#ffffff'
+        }).setOrigin(0.5);
+
+        stokeBtn.on('pointerdown', () => {
+          this.isStokingFire = true;
+          stokeBtn.setFillStyle(0xff6b35, 1);
+        });
+        stokeBtn.on('pointerup', () => {
+          this.isStokingFire = false;
+          stokeBtn.setFillStyle(0xd94e34, 0.92);
+        });
+        stokeBtn.on('pointerout', () => {
+          this.isStokingFire = false;
+          stokeBtn.setFillStyle(0xd94e34, 0.92);
+        });
+
+        const cancelBtn = this.add.rectangle(595, 322, 100, 46, 0x334155, 0.9)
+          .setStrokeStyle(1.5, 0x94a3b8)
+          .setInteractive({ useHandCursor: true });
+        const cancelTxt = this.add.text(595, 322, '✕ 暂不烹饪', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#cbd5e1'
+        }).setOrigin(0.5);
+
+        cancelBtn.on('pointerdown', () => {
+          this.isCookingActive = false;
+          this.isStokingFire = false;
+          this.cookingContainer.setVisible(false);
+        });
+
+        this.cookingContainer.add([
+          panelBg, this.cookTitleText, this.cookPhaseText,
+          barTrack, this.targetZoneRect, this.heatPointer,
+          this.heatStatusText, progBg, this.progFill, this.progLabel,
+          stokeBtn, stokeTxt, cancelBtn, cancelTxt
+        ]);
+      }
+
+      openCookingMinigame(cfg) {
+        this.isDialogueActive = false;
+        this.dialogueContainer.setVisible(false);
+
+        this.activeChapterCfg = cfg.chapterConfig || CHAPTER_CONFIGS[GlobalGameState.chapter];
+        this.cookTitleText.setText(`🔥 暖炉灶台：第 ${this.activeChapterCfg.chapter} 章料理 —《${this.activeChapterCfg.dishName}》`);
+
+        this.isCookingActive = true;
+        this.cookingHeat = 32;
+        this.cookingProgress = 0;
+        this.cookingMistakeTime = 0;
+        this.isStokingFire = false;
+        this.cookingCallback = cfg.onSuccess;
+        this.cookingContainer.setVisible(true);
+      }
+
+      // 阶段 5 新增：构建终局团圆夜宴结局演出面板
+      createEndingCutsceneModal() {
+        this.endingContainer = this.add.container(0, 0).setDepth(150).setVisible(false);
+
+        const overlay = this.add.rectangle(400, 225, 800, 450, 0x090d16, 0.88).setInteractive();
+        const card = this.add.rectangle(400, 225, 620, 340, 0x1b1512, 0.98)
+          .setStrokeStyle(3, 0xffb84d, 1);
+
+        this.endingTitle = this.add.text(400, 86, '🏆 终幕达成：《异世界厨师 — 暖炉亭的归属之夜》', {
+          fontSize: '16px',
+          fontFamily: 'monospace',
+          fontStyle: 'bold',
+          color: '#ffe89e',
+          backgroundColor: '#7a2e1d',
+          padding: { x: 12, y: 6 }
+        }).setOrigin(0.5);
+
+        this.endingBody = this.add.text(120, 122, '', {
+          fontSize: '13px',
+          fontFamily: 'monospace',
+          color: '#f8fafc',
+          lineSpacing: 6
+        });
+
+        this.endingStats = this.add.text(400, 312, '', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#8ae0a8',
+          backgroundColor: '#0f172a',
+          padding: { x: 10, y: 5 }
+        }).setOrigin(0.5);
+
+        const contBtn = this.add.rectangle(300, 362, 180, 38, 0x2d6a4f, 0.95)
+          .setStrokeStyle(2, 0x8ae0a8)
+          .setInteractive({ useHandCursor: true });
+        const contTxt = this.add.text(300, 362, '✨ 继续自由探索世界', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          fontStyle: 'bold',
+          color: '#ffffff'
+        }).setOrigin(0.5);
+
+        contBtn.on('pointerdown', () => {
+          SoundFX.blip();
+          this.isEndingActive = false;
+          this.endingContainer.setVisible(false);
+        });
+
+        const replayBtn = this.add.rectangle(505, 362, 180, 38, 0xb84a39, 0.95)
+          .setStrokeStyle(2, 0xffe89e)
+          .setInteractive({ useHandCursor: true });
+        const replayTxt = this.add.text(505, 362, '↺ 重置存档开启新周目', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          fontStyle: 'bold',
+          color: '#ffffff'
+        }).setOrigin(0.5);
+
+        replayBtn.on('pointerdown', () => {
+          SoundFX.blip();
+          SaveSystem.resetAll();
+          this.isEndingActive = false;
+          this.endingContainer.setVisible(false);
+          const world = this.scene.get('WorldScene');
+          if (world) world.scene.restart({ room: 'A', from: 'START' });
+        });
+
+        this.endingContainer.add([
+          overlay, card, this.endingTitle, this.endingBody,
+          this.endingStats, contBtn, contTxt, replayBtn, replayTxt
+        ]);
+      }
+
+      openEndingModal(quality) {
+        this.isEndingActive = true;
+        const qualityLine = quality === 'PERFECT'
+          ? '【★主厨级·异界团圆什锦炙烤】散发着金色的琥珀光芒，满屋飘香！'
+          : '热气腾腾的【异界团圆什锦炙烤】被端上了木桌，驱散了窗外风雨的寒意！';
+
+        const storyParagraphs = [
+          qualityLine,
+          '老主厨巴隆大笑着举起麦酒杯，巡林少女艾琳卸下了夜巡的紧绷露出微笑，异乡行商老霍克盛满热汤感慨万千。',
+          '站在暖炉跳跃的火光旁，你低头看向自己曾经因前世遇害而发抖的双手——此刻它们稳健、温暖，充满烟火的温度。',
+          '原来，转生异世界的意义不是为了挥剑杀戮，而是用一道道热菜连接孤独的灵魂。这里不再是陌生的异界，而是你的新家。'
+        ].map(p => this.formatChineseWrap(p, 42)).join('\n\n');
+
+        this.endingBody.setText(storyParagraphs);
+        this.endingStats.setText(
+          `📊 旅程统计：套索抓肉 ${GlobalGameState.lassoSuccessCount} 次 | 采摘浆果 ${GlobalGameState.berryPickCount} 颗 | 拔取夜光菇 ${GlobalGameState.shroomPickCount} 朵 | 成功烹饪 ${GlobalGameState.cookSuccessCount} 道`
+        );
+        this.endingContainer.setVisible(true);
+      }
+
+      formatChineseWrap(text, maxUnitsPerLine = 34) {
+        if (!text) return '';
+        const paragraphs = String(text).split('\n');
+        const wrappedParagraphs = paragraphs.map(para => {
+          let line = '';
+          let count = 0;
+          let result = '';
+          for (const ch of para) {
+            const charWidth = ch.charCodeAt(0) > 255 ? 1 : 0.55;
+            if (count + charWidth > maxUnitsPerLine) {
+              result += line + '\n';
+              line = ch;
+              count = charWidth;
+            } else {
+              line += ch;
+              count += charWidth;
+            }
+          }
+          return result + line;
+        });
+        return wrappedParagraphs.join('\n');
+      }
+
+      createTopButton(x, y, w, h, label, callback) {
+        const bg = this.add.rectangle(x + w / 2, y + h / 2, w, h, 0x1e293b, 0.88)
+          .setStrokeStyle(1.5, 0x94a3b8)
+          .setInteractive({ useHandCursor: true });
+        const txt = this.add.text(x + w / 2, y + h / 2, label, {
+          fontSize: '11px',
+          fontFamily: 'monospace',
+          color: '#f8fafc'
+        }).setOrigin(0.5);
+
+        bg.on('pointerdown', () => {
+          bg.setFillStyle(0x3b5dc9, 0.95);
+          callback();
+        });
+        bg.on('pointerup', () => bg.setFillStyle(0x1e293b, 0.88));
+        bg.on('pointerout', () => bg.setFillStyle(0x1e293b, 0.88));
+        return txt;
+      }
+
+      createTouchControls() {
+        const vInput = GlobalGameState.virtualInput;
+
+        const makePadBtn = (x, y, w, h, label, colorHex, onDown, onUp) => {
+          const btn = this.add.rectangle(x, y, w, h, colorHex, 0.42)
+            .setStrokeStyle(2, 0xffe89e, 0.65)
+            .setInteractive();
+          const txt = this.add.text(x, y, label, {
+            fontSize: '18px',
+            fontFamily: 'monospace',
+            fontStyle: 'bold',
+            color: '#ffffff'
+          }).setOrigin(0.5).setAlpha(0.85);
+
+          btn.on('pointerdown', () => {
+            btn.setAlpha(0.85);
+            onDown();
+          });
+          btn.on('pointerup', () => {
+            btn.setAlpha(0.42);
+            onUp();
+          });
+          btn.on('pointerout', () => {
+            btn.setAlpha(0.42);
+            onUp();
+          });
+          return { btn, txt };
+        };
+
+        makePadBtn(58, 396, 76, 64, '◀ 左', 0x1e293b,
+          () => { vInput.left = true; },
+          () => { vInput.left = false; }
+        );
+        makePadBtn(148, 396, 76, 64, '右 ▶', 0x1e293b,
+          () => { vInput.right = true; },
+          () => { vInput.right = false; }
+        );
+
+        makePadBtn(644, 396, 76, 64, '★互动', 0xb84a39,
+          () => {
+            if (this.isCookingActive) {
+              this.isStokingFire = true;
+            } else if (this.isDialogueActive) {
+              this.advanceDialogue();
+            } else {
+              vInput.interactJustDown = true;
+            }
+          },
+          () => {
+            if (this.isCookingActive) {
+              this.isStokingFire = false;
+            }
+          }
+        );
+        makePadBtn(738, 396, 82, 64, '▲跳跃', 0x2b6cb0,
+          () => {
+            if (this.isCookingActive) {
+              this.isStokingFire = true;
+            } else {
+              vInput.jumpPressed = true;
+              vInput.jumpJustDown = true;
+            }
+          },
+          () => {
+            this.isStokingFire = false;
+            vInput.jumpPressed = false;
+          }
+        );
+      }
+
+      createDialogueBox() {
+        this.dialogueContainer = this.add.container(0, 0).setDepth(100).setVisible(false);
+
+        const boxBg = this.add.rectangle(400, 356, 560, 132, 0x131824, 0.96)
+          .setStrokeStyle(3, 0xffb84d, 1)
+          .setInteractive();
+
+        this.speakerTag = this.add.text(136, 298, '', {
+          fontSize: '14px',
+          fontFamily: 'monospace',
+          fontStyle: 'bold',
+          color: '#131824',
+          backgroundColor: '#ffb84d',
+          padding: { x: 8, y: 3 }
+        });
+
+        this.dialogueBody = this.add.text(136, 326, '', {
+          fontSize: '14px',
+          fontFamily: 'monospace',
+          color: '#f8fafc',
+          lineSpacing: 6,
+          wordWrap: { width: 512, useAdvancedWrap: true }
+        });
+
+        this.dialogueHint = this.add.text(665, 412, '点击继续 ▶', {
+          fontSize: '12px',
+          fontFamily: 'monospace',
+          color: '#ffe89e'
+        }).setOrigin(1, 1);
+
+        boxBg.on('pointerdown', () => this.advanceDialogue());
+
+        this.dialogueContainer.add([boxBg, this.speakerTag, this.dialogueBody, this.dialogueHint]);
+      }
+
+      openDialogue(speaker, lines) {
+        SoundFX.blip();
+        this.isDialogueActive = true;
+        this.dialogueLines = lines;
+        this.dialogueIndex = 0;
+        this.speakerTag.setText(speaker);
+        this.dialogueBody.setText(this.formatChineseWrap(this.dialogueLines[0], 34));
+        this.dialogueContainer.setVisible(true);
+      }
+
+      advanceDialogue() {
+        SoundFX.blip();
+        this.dialogueIndex++;
+        if (this.dialogueIndex < this.dialogueLines.length) {
+          this.dialogueBody.setText(this.formatChineseWrap(this.dialogueLines[this.dialogueIndex], 34));
+        } else {
+          this.isDialogueActive = false;
+          this.dialogueContainer.setVisible(false);
+        }
+      }
+
+      update(time, delta) {
+        const dt = delta / 1000;
+        const roomMeta = ROOM_METADATA[GlobalGameState.currentRoom];
+        const roomTitle = roomMeta ? roomMeta.name : GlobalGameState.currentRoom;
+        this.objectiveText.setText(`[${roomTitle}] ${GlobalGameState.currentObjective}`);
+
+        // 更新右上角全食材背包栏
+        const inv = GlobalGameState.inventory;
+        const total = InventoryManager.getTotalCount();
+        const curCfg = CHAPTER_CONFIGS[GlobalGameState.chapter];
+        const dishIcon = (inv.dishQuality === 'PERFECT' && inv.cookedDish > 0) ? `★${curCfg.dishIcon}` : curCfg.dishIcon;
+        this.invText.setText(`🎒${total}/${inv.maxCapacity} | 🥩×${inv.meat} 🍒×${inv.berry} 🍄×${inv.mushroom} ${dishIcon}×${inv.cookedDish}`);
+
+        // 更新多段式火候烹饪小游戏逻辑
+        if (this.isCookingActive) {
+          const keyHolding =
+            this.cookKeys.space.isDown ||
+            this.cookKeys.e.isDown ||
+            this.cookKeys.w.isDown ||
+            this.cookKeys.up.isDown ||
+            this.isStokingFire;
+
+          if (keyHolding) {
+            this.cookingHeat = Math.min(100, this.cookingHeat + 58 * dt);
+          } else {
+            this.cookingHeat = Math.max(0, this.cookingHeat - 40 * dt);
+          }
+
+          // 根据当前章节食谱的 phases 匹配当前进度所在的火候区间
+          const phases = this.activeChapterCfg.phases;
+          let activePhase = phases[phases.length - 1];
+          for (const ph of phases) {
+            if (this.cookingProgress >= ph.minProg && this.cookingProgress < ph.maxProg) {
+              activePhase = ph;
+              break;
+            }
+          }
+
+          const targetMin = activePhase.minHeat;
+          const targetMax = activePhase.maxHeat;
+          this.cookPhaseText.setText(activePhase.label);
+          this.cookPhaseText.setColor(activePhase.color);
+
+          const zoneCenterRatio = (targetMin + targetMax) / 200;
+          const zoneWidthRatio = (targetMax - targetMin) / 100;
+          this.targetZoneRect.x = this.barLeftX + this.barWidth * zoneCenterRatio;
+          this.targetZoneRect.width = this.barWidth * zoneWidthRatio;
+
+          this.heatPointer.x = this.barLeftX + (this.cookingHeat / 100) * this.barWidth;
+
+          if (this.cookingHeat >= targetMin && this.cookingHeat <= targetMax) {
+            this.cookingProgress = Math.min(100, this.cookingProgress + 23 * dt);
+            this.heatStatusText.setText('✨ 完美火候！香味正在迅速凝聚...');
+            this.heatStatusText.setColor('#8ae0a8');
+          } else {
+            this.cookingProgress = Math.min(100, this.cookingProgress + 4.5 * dt);
+            this.cookingMistakeTime += dt;
+            if (this.cookingHeat > targetMax) {
+              this.heatStatusText.setText('⚠️ 火候过高！松开鼓风降温，小心烤焦！');
+              this.heatStatusText.setColor('#ff6b6b');
+            } else {
+              this.heatStatusText.setText('❄️ 火力不足！按住【🔥鼓风升温】或 Space 键！');
+              this.heatStatusText.setColor('#93c5fd');
+            }
+          }
+
+          this.progFill.width = Math.max(4, (this.cookingProgress / 100) * 356);
+          const qualityPreview = this.cookingMistakeTime <= 3.5 ? '★主厨级美味预备' : '普通品质预备';
+          this.progLabel.setText(`烹饪进度: ${Math.floor(this.cookingProgress)}% (${qualityPreview})`);
+
+          if (this.cookingProgress >= 100) {
+            this.isCookingActive = false;
+            this.isStokingFire = false;
+            this.cookingContainer.setVisible(false);
+            const finalQuality = this.cookingMistakeTime <= 3.5 ? 'PERFECT' : 'NORMAL';
+            if (this.cookingCallback) {
+              this.cookingCallback(finalQuality);
+            }
+          }
+        }
+
+        this.debugBg.setVisible(GlobalGameState.debugVisible);
+        this.debugText.setVisible(GlobalGameState.debugVisible);
+
+        if (GlobalGameState.debugVisible) {
+          const t = GlobalGameState.telemetry;
+          const qState = GlobalGameState.quest.state;
+          const flags = GlobalGameState.storyFlags;
+          this.debugText.setText([
+            `[阶段5 最终完整版 · 全系统实时遥测面板]`,
+            `当前章节 : 第 ${GlobalGameState.chapter}/3 章《${CHAPTER_CONFIGS[GlobalGameState.chapter].dishName}》`,
+            `任务状态 : ${qState} (${QUEST_STATE_LABELS[qState]})`,
+            `食客入驻 : 艾琳:${flags.eileenInRestaurant ? '✅' : '否'} | 老霍克:${flags.hawkInRestaurant ? '✅' : '否'} | 矿梯:${flags.mineLiftUnlocked ? '✅' : '否'}`,
+            `背包存档 : 🥩:${inv.meat} 🍒:${inv.berry} 🍄:${inv.mushroom} | 自动存档: 已启用`,
+            `附近交互 : ${t.nearTarget}`
+          ]);
+        }
+      }
+    }
+
+    // ----------------------------------------------------------------------------
+    // 5. 启动 Phaser 3 游戏实例
+    // ----------------------------------------------------------------------------
+    const config = {
+      type: Phaser.AUTO,
+      parent: 'game-container',
+      width: 800,
+      height: 450,
+      backgroundColor: '#0d111a',
+      pixelArt: true,
+      scale: {
+        mode: Phaser.Scale.FIT,
+        autoCenter: Phaser.Scale.CENTER_BOTH
+      },
+      physics: {
+        default: 'arcade',
+        arcade: {
+          gravity: { y: 1100 },
+          debug: false
+        }
+      },
+      scene: [WorldScene, UIScene]
+    };
+
+    window.addEventListener('load', () => {
+      new Phaser.Game(config);
+    });
+  </script>
+</body>
+</html>
